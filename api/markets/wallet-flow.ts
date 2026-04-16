@@ -100,7 +100,7 @@ export default async function handler(
       return;
     }
 
-    const cached = await getCachedMarketWalletFlow(cacheId, filters.window);
+    const cached = await getCachedMarketWalletFlow(cacheId, filters.window, filters.limit);
     if (cached) {
       res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
       res.status(200).json(buildResponse(
@@ -120,7 +120,7 @@ export default async function handler(
     }
 
     const result = await getMarketWalletFlow(filters, markets);
-    await setCachedMarketWalletFlow(cacheId, filters.window, {
+    await setCachedMarketWalletFlow(cacheId, filters.window, filters.limit, {
       flow: result.flow,
       activity: result.activity,
       market: result.market ?? null,
@@ -289,7 +289,7 @@ async function getStaleFlow(req: VercelRequest): Promise<{
   const cacheId = resolveMarketWalletFlowCacheId(filters, []);
   if (!cacheId) return null;
 
-  const key = getMarketWalletFlowKey(cacheId, filters.window);
+  const key = getMarketWalletFlowKey(cacheId, filters.window, filters.limit);
   const stale = getStaleWalletMemoryCache<CachedMarketWalletFlow>(key);
   if (!stale) return null;
 

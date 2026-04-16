@@ -162,12 +162,14 @@ export async function setCachedWalletValue(
  *
  * @param marketId Musashi or Polymarket market id.
  * @param window Flow aggregation window.
+ * @param limit Activity row limit used for aggregation.
  */
 export async function getCachedMarketWalletFlow(
   marketId: string,
   window: MarketWalletFlow['window'],
+  limit: number,
 ): Promise<WalletCacheHit<CachedMarketWalletFlow> | null> {
-  return getWalletCache<CachedMarketWalletFlow>(getMarketWalletFlowKey(marketId, window));
+  return getWalletCache<CachedMarketWalletFlow>(getMarketWalletFlowKey(marketId, window, limit));
 }
 
 /**
@@ -175,15 +177,17 @@ export async function getCachedMarketWalletFlow(
  *
  * @param marketId Musashi or Polymarket market id.
  * @param window Flow aggregation window.
+ * @param limit Activity row limit used for aggregation.
  * @param flow Normalized wallet flow.
  */
 export async function setCachedMarketWalletFlow(
   marketId: string,
   window: MarketWalletFlow['window'],
+  limit: number,
   flow: CachedMarketWalletFlow,
 ): Promise<WalletCacheEntry<CachedMarketWalletFlow>> {
   return setWalletCache(
-    getMarketWalletFlowKey(marketId, window),
+    getMarketWalletFlowKey(marketId, window, limit),
     flow,
     MARKET_WALLET_FLOW_TTL_SECONDS,
   );
@@ -267,12 +271,14 @@ export function getWalletValueKey(wallet: string): string {
  *
  * @param marketId Musashi or Polymarket market id.
  * @param window Flow aggregation window.
+ * @param limit Activity row limit used for aggregation.
  */
 export function getMarketWalletFlowKey(
   marketId: string,
   window: MarketWalletFlow['window'],
+  limit: number,
 ): string {
-  return `market:wallet_flow:v2:${normalizeKeyPart(marketId)}:${window}`;
+  return `market:wallet_flow:v3:${normalizeKeyPart(marketId)}:${window}:${limit}`;
 }
 
 /**

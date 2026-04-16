@@ -52,10 +52,14 @@ function installFetchMock(mock) {
   };
 }
 
+function unixSecondsAgo(seconds) {
+  return Math.floor((Date.now() - (seconds * 1000)) / 1000);
+}
+
 function mockActivityRows() {
   return [
     {
-      timestamp: 1775851200,
+      timestamp: unixSecondsAgo(60),
       proxyWallet: '0x0000000000000000000000000000000000000001',
       conditionId: 'cond1',
       asset: 'token1',
@@ -70,7 +74,7 @@ function mockActivityRows() {
       eventSlug: 'mock-event',
     },
     {
-      timestamp: 1775851210,
+      timestamp: unixSecondsAgo(120),
       proxyWallet: '0x0000000000000000000000000000000000000002',
       conditionId: 'cond1',
       asset: 'token1',
@@ -85,7 +89,7 @@ function mockActivityRows() {
       eventSlug: 'mock-event',
     },
     {
-      timestamp: 1775851220,
+      timestamp: unixSecondsAgo(180),
       proxyWallet: '0x0000000000000000000000000000000000000003',
       conditionId: 'cond1',
       asset: 'token1',
@@ -119,6 +123,8 @@ test('wallet-flow accepts valid window values and preserves full activity on cac
     assert.equal(url.pathname, '/trades');
     assert.equal(url.searchParams.get('market'), 'cond1');
     assert.equal(url.searchParams.has('user'), false);
+    assert.equal(url.searchParams.has('start'), false);
+    assert.equal(url.searchParams.has('end'), false);
     return jsonResponse(mockActivityRows());
   });
 
@@ -153,6 +159,148 @@ test('wallet-flow accepts valid window values and preserves full activity on cac
     assert.equal(second.body.metadata.activities_analyzed, 3);
     assert.deepEqual(second.body.data.activity, first.body.data.activity);
     assert.equal(upstreamCalls, 1);
+  } finally {
+    restoreFetch();
+    walletCacheModule.clearWalletMemoryCache();
+  }
+});
+
+test('wallet-flow cache varies by activity limit', async () => {
+  walletCacheModule.clearWalletMemoryCache();
+  let upstreamCalls = 0;
+  const restoreFetch = installFetchMock(async (input) => {
+    const rawUrl = String(input);
+    if (rawUrl.includes('gamma-api.polymarket.com')) {
+      return jsonResponse([]);
+    }
+    if (rawUrl.includes('api.elections.kalshi.com')) {
+      return jsonResponse({ markets: [] });
+    }
+
+    upstreamCalls += 1;
+    const url = new URL(rawUrl);
+    const limit = Number(url.searchParams.get('limit') || 100);
+    return jsonResponse(mockActivityRows().slice(0, limit));
+  });
+
+  try {
+    const first = createResponse();
+    await walletFlowHandler({
+      method: 'GET',
+      query: {
+        conditionId: 'cond-limit',
+        window: '24h',
+        limit: '1',
+      },
+    }, first);
+
+    const second = createResponse();
+    await walletFlowHandler({
+      method: 'GET',
+      query: {
+        conditionId: 'cond-limit',
+        window: '24h',
+        limit: '3',
+      },
+    }, second);
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(first.body.data.count, 1);
+    assert.equal(second.body.data.count, 3);
+    assert.equal(first.body.metadata.cached, false);
+    assert.equal(second.body.metadata.cached, false);
+    assert.equal(upstreamCalls, 2);
+  } finally {
+    restoreFetch();
+    walletCacheModule.clearWalletMemoryCache();
+  }
+});
+
+test('wallet-flow filters market trades to the requested window locally', async () => {
+  walletCacheModule.clearWalletMemoryCache();
+  const oldWallet = '0x00000000000000000000000000000000000000ff';
+  const restoreFetch = installFetchMock(async (input) => {
+    const rawUrl = String(input);
+    if (rawUrl.includes('gamma-api.polymarket.com')) {
+      return jsonResponse([]);
+    }
+    if (rawUrl.includes('api.elections.kalshi.com')) {
+      return jsonResponse({ markets: [] });
+    }
+
+    const url = new URL(rawUrl);
+    assert.equal(url.pathname, '/trades');
+    assert.equal(url.searchParams.has('start'), false);
+    assert.equal(url.searchParams.has('end'), false);
+
+    return jsonResponse([
+      {
+        timestamp: unixSecondsAgo(10 * 60),
+        proxyWallet: '0x0000000000000000000000000000000000000001',
+        conditionId: 'cond1',
+        asset: 'token1',
+        side: 'BUY',
+        price: 0.5,
+        size: 10,
+        usdcSize: 5,
+        type: 'TRADE',
+        title: 'Mock market',
+        outcome: 'YES',
+        slug: 'mock-market',
+        eventSlug: 'mock-event',
+      },
+      {
+        timestamp: unixSecondsAgo(20 * 60),
+        proxyWallet: '0x0000000000000000000000000000000000000002',
+        conditionId: 'cond1',
+        asset: 'token1',
+        side: 'SELL',
+        price: 0.4,
+        size: 20,
+        usdcSize: 8,
+        type: 'TRADE',
+        title: 'Mock market',
+        outcome: 'YES',
+        slug: 'mock-market',
+        eventSlug: 'mock-event',
+      },
+      {
+        timestamp: unixSecondsAgo(2 * 60 * 60),
+        proxyWallet: oldWallet,
+        conditionId: 'cond1',
+        asset: 'token1',
+        side: 'BUY',
+        price: 0.9,
+        size: 1000,
+        usdcSize: 900,
+        type: 'TRADE',
+        title: 'Mock market',
+        outcome: 'NO',
+        slug: 'mock-market',
+        eventSlug: 'mock-event',
+      },
+    ]);
+  });
+
+  try {
+    const response = createResponse();
+    await walletFlowHandler({
+      method: 'GET',
+      query: {
+        conditionId: 'cond1',
+        window: '1h',
+        limit: '3',
+      },
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.success, true);
+    assert.equal(response.body.data.count, 2);
+    assert.equal(response.body.metadata.activities_analyzed, 2);
+    assert.equal(response.body.data.activity.some((item) => item.wallet === oldWallet), false);
+    assert.equal(response.body.data.flow.buyVolume, 5);
+    assert.equal(response.body.data.flow.sellVolume, 8);
   } finally {
     restoreFetch();
     walletCacheModule.clearWalletMemoryCache();
@@ -196,7 +344,7 @@ test('smart-money accepts a valid 24h window and returns ranked mocked flow', as
       assert.equal(parsed.searchParams.has('user'), false);
       return jsonResponse([
         {
-          timestamp: 1775851200,
+          timestamp: unixSecondsAgo(60),
           proxyWallet: '0x0000000000000000000000000000000000000001',
           conditionId: 'cond1',
           asset: 'token1',

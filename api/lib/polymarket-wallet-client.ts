@@ -214,13 +214,15 @@ export async function fetchMarketTrades(
   });
 
   if (options.side) params.set('side', options.side);
-  appendUnixTimestampParam(params, 'start', options.since);
-  appendUnixTimestampParam(params, 'end', options.until);
+
+  const sinceMillis = parseOptionalTimestamp(options.since, 'since');
+  const untilMillis = parseOptionalTimestamp(options.until, 'until');
 
   const data = await fetchPolymarketArray('/trades', params, options.timeoutMs);
   return data
     .map(item => toWalletTrade(item))
-    .filter((item): item is WalletActivity => item !== null);
+    .filter((item): item is WalletActivity => item !== null)
+    .filter(item => isWithinTimestampRange(item.timestamp, sinceMillis, untilMillis));
 }
 
 /**
@@ -438,6 +440,29 @@ function appendUnixTimestampParam(
   }
 
   params.set(key, Math.floor(timestamp / 1000).toString());
+}
+
+function parseOptionalTimestamp(value: string | undefined, label: string): number | undefined {
+  if (!value) return undefined;
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    throw new Error(`Invalid ${label} timestamp. Use ISO 8601 format.`);
+  }
+
+  return timestamp;
+}
+
+function isWithinTimestampRange(
+  value: string,
+  sinceMillis?: number,
+  untilMillis?: number,
+): boolean {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return false;
+  if (sinceMillis !== undefined && timestamp < sinceMillis) return false;
+  if (untilMillis !== undefined && timestamp > untilMillis) return false;
+  return true;
 }
 
 function getIsoTimestamp(value: unknown): string | undefined {
