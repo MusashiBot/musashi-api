@@ -63,7 +63,7 @@ export class MusashiApiClient {
       minConfidence?: number;
       maxResults?: number;
     }
-  ): Promise<MarketMatch[]> {
+  ): Promise<AnalyzeTextResponse> {
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -93,7 +93,7 @@ export class MusashiApiClient {
         throw new Error(result.error || 'Unknown API error');
       }
 
-      return result.data?.markets || [];
+      return result;
     } catch (error) {
       console.error('[Musashi API] Error analyzing text:', error);
       // Return empty array on error - extension will handle gracefully
