@@ -86,7 +86,7 @@ export interface FetchWalletValueOptions {
   market?: string | string[];
 }
 
-export interface FetchMarketActivityOptions {
+export interface FetchMarketTradesOptions {
   /** Max activity rows to request. */
   limit?: number;
   /** Pagination offset from Polymarket. */
@@ -95,8 +95,6 @@ export interface FetchMarketActivityOptions {
   since?: string;
   /** ISO timestamp upper bound. */
   until?: string;
-  /** Polymarket activity types to include. */
-  type?: PolymarketActivityApiType | PolymarketActivityApiType[];
   /** Trade side filter. */
   side?: PolymarketActivitySide;
   /** Upstream sort field. */
@@ -198,14 +196,14 @@ export async function fetchWalletValue(
 }
 
 /**
- * Fetch recent public activity for a Polymarket market.
+ * Fetch recent public trades for a Polymarket market.
  *
- * @param market Condition id or token id accepted by Polymarket's Data API.
+ * @param market Polymarket condition id accepted by the Data API.
  * @param options Optional upstream filters and pagination.
  */
-export async function fetchMarketActivity(
+export async function fetchMarketTrades(
   market: string,
-  options: FetchMarketActivityOptions = {},
+  options: FetchMarketTradesOptions = {},
 ): Promise<WalletActivity[]> {
   const params = new URLSearchParams({
     market,
@@ -215,21 +213,20 @@ export async function fetchMarketActivity(
     sortDirection: options.sortDirection || 'DESC',
   });
 
-  appendCsvParam(params, 'type', options.type);
   if (options.side) params.set('side', options.side);
   appendUnixTimestampParam(params, 'start', options.since);
   appendUnixTimestampParam(params, 'end', options.until);
 
-  const data = await fetchPolymarketArray('/activity', params, options.timeoutMs);
+  const data = await fetchPolymarketArray('/trades', params, options.timeoutMs);
   return data
-    .map(item => toWalletActivity(item, ''))
+    .map(item => toWalletTrade(item))
     .filter((item): item is WalletActivity => item !== null);
 }
 
 /**
  * Fetch a Data API endpoint and require an array response.
  *
- * @param path Data API path such as /activity.
+ * @param path Data API path such as /activity or /trades.
  * @param params Already-normalized query params.
  */
 async function fetchPolymarketArray(
@@ -292,6 +289,43 @@ function toWalletActivity(item: unknown, requestedWallet: string): WalletActivit
   return {
     wallet,
     activityType: normalizeActivityType(getString(item.type)),
+    platform: 'polymarket',
+    marketId: conditionId ? `polymarket-${conditionId}` : undefined,
+    conditionId,
+    tokenId,
+    marketTitle: getString(item.title),
+    marketSlug,
+    outcome: getString(item.outcome),
+    side,
+    price,
+    size,
+    value,
+    timestamp,
+    url: buildMarketUrl(eventSlug, marketSlug),
+  };
+}
+
+function toWalletTrade(item: unknown): WalletActivity | null {
+  if (!isRecord(item)) return null;
+
+  const timestamp = getIsoTimestamp(item.timestamp);
+  if (!timestamp) return null;
+
+  const rawWallet = getString(item.proxyWallet);
+  if (!rawWallet) return null;
+
+  const conditionId = getString(item.conditionId);
+  const tokenId = getString(item.asset);
+  const marketSlug = getString(item.slug);
+  const eventSlug = getString(item.eventSlug);
+  const side = normalizeSide(getString(item.side));
+  const price = getNumber(item.price);
+  const size = getNumber(item.size);
+  const value = getNumber(item.usdcSize) ?? multiplyNumbers(price, size);
+
+  return {
+    wallet: normalizeWallet(rawWallet),
+    activityType: 'trade',
     platform: 'polymarket',
     marketId: conditionId ? `polymarket-${conditionId}` : undefined,
     conditionId,

@@ -143,8 +143,6 @@ export interface GetMarketWalletFlowOptions {
   marketId?: string;
   /** Polymarket condition id. */
   conditionId?: string;
-  /** Polymarket token id. */
-  tokenId?: string;
   /** Text used to resolve a market. */
   query?: string;
   /** Aggregation window. */
@@ -386,7 +384,6 @@ export class MusashiAgent {
     const params = new URLSearchParams();
     if (options.marketId) params.set('marketId', options.marketId);
     if (options.conditionId) params.set('conditionId', options.conditionId);
-    if (options.tokenId) params.set('tokenId', options.tokenId);
     if (options.query) params.set('query', options.query);
     if (options.window) params.set('window', options.window);
     if (options.limit) params.set('limit', options.limit.toString());

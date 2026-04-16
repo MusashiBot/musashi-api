@@ -28,6 +28,8 @@ export interface SmartMoneyMarketsResult {
 interface FlowCollectionResult {
   rows: Array<{ market: Market; flow: MarketWalletFlow }>;
   candidatesAttempted: number;
+  requestsFulfilled: number;
+  requestsRejected: number;
   timedOut: boolean;
 }
 
@@ -51,6 +53,14 @@ export async function getSmartMoneyMarkets(
 ): Promise<SmartMoneyMarketsResult> {
   const candidates = selectCandidates(allMarkets, input);
   const flowCollection = await collectMarketFlows(candidates, input);
+  if (
+    flowCollection.candidatesAttempted > 0 &&
+    flowCollection.requestsFulfilled === 0 &&
+    flowCollection.requestsRejected > 0
+  ) {
+    throw new Error('All smart-money wallet-flow requests failed.');
+  }
+
   const flowResults = flowCollection.rows;
   const ranked = flowResults
     .map(({ market, flow }) => toSmartMoneyMarket(market, flow))
@@ -88,6 +98,8 @@ async function collectMarketFlows(
   const flowLimit = normalizeFlowLimit(input.flowLimit);
   const deadline = Date.now() + TIME_BUDGET_MS;
   let candidatesAttempted = 0;
+  let requestsFulfilled = 0;
+  let requestsRejected = 0;
   let timedOut = false;
 
   for (let index = 0; index < candidates.length; index += FLOW_BATCH_SIZE) {
@@ -116,8 +128,13 @@ async function collectMarketFlows(
     );
 
     for (const result of settled) {
-      if (result.status === 'fulfilled' && hasMeaningfulFlow(result.value.flow)) {
-        rows.push(result.value);
+      if (result.status === 'fulfilled') {
+        requestsFulfilled += 1;
+        if (hasMeaningfulFlow(result.value.flow)) {
+          rows.push(result.value);
+        }
+      } else {
+        requestsRejected += 1;
       }
     }
   }
@@ -125,6 +142,8 @@ async function collectMarketFlows(
   return {
     rows,
     candidatesAttempted,
+    requestsFulfilled,
+    requestsRejected,
     timedOut,
   };
 }

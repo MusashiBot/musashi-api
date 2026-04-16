@@ -1,14 +1,12 @@
 import type { Market } from '../../src/types/market';
 import type { MarketWalletFlow, WalletActivity } from '../../src/types/wallet';
-import { fetchMarketActivity } from './polymarket-wallet-client';
+import { fetchMarketTrades } from './polymarket-wallet-client';
 
 export interface MarketWalletFlowInput {
   /** Musashi market id, usually polymarket-{conditionId}. */
   marketId?: string;
   /** Polymarket condition id. */
   conditionId?: string;
-  /** Polymarket token id. */
-  tokenId?: string;
   /** Text used to resolve a market when ids are unavailable. */
   query?: string;
   /** Aggregation window. */
@@ -31,7 +29,6 @@ export interface MarketWalletFlowResult {
 interface ResolvedMarket {
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   marketTitle?: string;
   market?: Market;
   matchConfidence?: number;
@@ -62,19 +59,18 @@ export async function getMarketWalletFlow(
   markets: Market[] = [],
 ): Promise<MarketWalletFlowResult> {
   const resolved = resolveMarket(input, markets);
-  const marketFilter = resolved.conditionId || resolved.tokenId || stripPolymarketPrefix(resolved.marketId || '');
+  const marketFilter = resolved.conditionId || stripPolymarketPrefix(resolved.marketId || '');
 
   if (!marketFilter) {
     if (input.query) {
       throw new Error('Could not resolve market query. Try marketId or conditionId.');
     }
-    throw new Error('Missing market identity. Provide marketId, conditionId, tokenId, or query.');
+    throw new Error('Missing market identity. Provide marketId, conditionId, or query.');
   }
 
-  const activity = await fetchMarketActivity(marketFilter, {
+  const activity = await fetchMarketTrades(marketFilter, {
     limit: input.limit,
     since: getWindowStart(input.window),
-    type: 'TRADE',
     timeoutMs: input.timeoutMs,
   });
   const flow = aggregateWalletFlow(activity, input.window, resolved);
@@ -96,11 +92,11 @@ export async function getMarketWalletFlow(
  * @param markets Optional cached market list.
  */
 export function resolveMarketWalletFlowCacheId(
-  input: Pick<MarketWalletFlowInput, 'marketId' | 'conditionId' | 'tokenId' | 'query'>,
+  input: Pick<MarketWalletFlowInput, 'marketId' | 'conditionId' | 'query'>,
   markets: Market[] = [],
 ): string {
   const resolved = resolveMarket({ ...input, window: '24h', limit: 1 }, markets);
-  return resolved.marketId || resolved.conditionId || resolved.tokenId || normalizeQuery(input.query || '');
+  return resolved.marketId || resolved.conditionId || normalizeQuery(input.query || '');
 }
 
 function aggregateWalletFlow(
@@ -140,7 +136,6 @@ function aggregateWalletFlow(
   return {
     marketId: market.marketId,
     conditionId: market.conditionId,
-    tokenId: market.tokenId,
     marketTitle: market.marketTitle,
     window,
     walletCount: wallets.size,
@@ -156,25 +151,22 @@ function aggregateWalletFlow(
 function resolveMarket(input: MarketWalletFlowInput, markets: Market[]): ResolvedMarket {
   const marketId = input.marketId?.trim();
   const conditionId = input.conditionId?.trim() || stripPolymarketPrefix(marketId || '');
-  const tokenId = input.tokenId?.trim();
   const exactMarket = findExactMarket(markets, marketId, conditionId);
 
   if (exactMarket) {
     return {
       marketId: exactMarket.id,
       conditionId: stripPolymarketPrefix(exactMarket.id),
-      tokenId,
       marketTitle: exactMarket.title,
       market: exactMarket,
       matchConfidence: 1,
     };
   }
 
-  if (marketId || conditionId || tokenId) {
+  if (marketId || conditionId) {
     return {
       marketId: marketId || (conditionId ? `polymarket-${conditionId}` : undefined),
       conditionId,
-      tokenId,
     };
   }
 

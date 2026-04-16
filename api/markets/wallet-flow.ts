@@ -26,7 +26,6 @@ interface ParseError {
 interface MarketWalletFlowFilters {
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   query?: string;
   window: MarketWalletFlow['window'];
   limit: number;
@@ -96,7 +95,7 @@ export default async function handler(
     if (!cacheId) {
       res.status(400).json({
         success: false,
-        error: 'Could not resolve market. Provide a valid marketId, conditionId, tokenId, or query.',
+        error: 'Could not resolve market. Provide a valid marketId, conditionId, or query.',
       });
       return;
     }
@@ -185,11 +184,10 @@ export default async function handler(
 function parseFilters(req: VercelRequest): MarketWalletFlowFilters | { error: string } {
   const marketId = getSingleQueryValue(req.query.marketId)?.trim();
   const conditionId = getSingleQueryValue(req.query.conditionId)?.trim();
-  const tokenId = getSingleQueryValue(req.query.tokenId)?.trim();
   const query = getSingleQueryValue(req.query.query)?.trim();
 
-  if (!marketId && !conditionId && !tokenId && !query) {
-    return { error: 'Missing market identity. Use marketId, conditionId, tokenId, or query.' };
+  if (!marketId && !conditionId && !query) {
+    return { error: 'Missing market identity. Use marketId, conditionId, or query.' };
   }
 
   const windowResult = parseWindow(getSingleQueryValue(req.query.window));
@@ -205,7 +203,6 @@ function parseFilters(req: VercelRequest): MarketWalletFlowFilters | { error: st
   return {
     marketId,
     conditionId,
-    tokenId,
     query,
     window: windowResult,
     limit,

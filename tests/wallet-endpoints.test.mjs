@@ -35,9 +35,9 @@ function createResponse() {
   };
 }
 
-function jsonResponse(payload) {
+function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
-    status: 200,
+    status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
     },
@@ -105,8 +105,20 @@ function mockActivityRows() {
 test('wallet-flow accepts valid window values and preserves full activity on cache hit', async () => {
   walletCacheModule.clearWalletMemoryCache();
   let upstreamCalls = 0;
-  const restoreFetch = installFetchMock(async () => {
+  const restoreFetch = installFetchMock(async (input) => {
+    const rawUrl = String(input);
+    if (rawUrl.includes('gamma-api.polymarket.com')) {
+      return jsonResponse([]);
+    }
+    if (rawUrl.includes('api.elections.kalshi.com')) {
+      return jsonResponse({ markets: [] });
+    }
+
     upstreamCalls += 1;
+    const url = new URL(rawUrl);
+    assert.equal(url.pathname, '/trades');
+    assert.equal(url.searchParams.get('market'), 'cond1');
+    assert.equal(url.searchParams.has('user'), false);
     return jsonResponse(mockActivityRows());
   });
 
@@ -114,7 +126,7 @@ test('wallet-flow accepts valid window values and preserves full activity on cac
     const request = {
       method: 'GET',
       query: {
-        tokenId: 'token1',
+        conditionId: 'cond1',
         window: '24h',
         limit: '3',
       },
@@ -178,6 +190,10 @@ test('smart-money accepts a valid 24h window and returns ranked mocked flow', as
     }
 
     if (url.includes('data-api.polymarket.com')) {
+      const parsed = new URL(url);
+      assert.equal(parsed.pathname, '/trades');
+      assert.equal(parsed.searchParams.get('market'), 'cond1');
+      assert.equal(parsed.searchParams.has('user'), false);
       return jsonResponse([
         {
           timestamp: 1775851200,
@@ -218,6 +234,66 @@ test('smart-money accepts a valid 24h window and returns ranked mocked flow', as
     assert.equal(response.body.data.count, 1);
     assert.equal(response.body.data.markets[0].flow.netDirection, 'YES');
     assert.equal(response.body.metadata.timed_out, false);
+  } finally {
+    restoreFetch();
+    walletCacheModule.clearWalletMemoryCache();
+  }
+});
+
+test('smart-money returns unavailable when all wallet-flow upstream calls fail', async () => {
+  walletCacheModule.clearWalletMemoryCache();
+  const restoreFetch = installFetchMock(async (input) => {
+    const url = String(input);
+
+    if (url.includes('gamma-api.polymarket.com')) {
+      return jsonResponse([
+        {
+          id: '1',
+          conditionId: 'cond1',
+          question: 'Will BTC hit 100k?',
+          description: 'Bitcoin milestone market.',
+          slug: 'btc-100k',
+          events: [{ slug: 'btc-100k' }],
+          outcomes: '["Yes","No"]',
+          outcomePrices: '["0.64","0.36"]',
+          volume: 100000,
+          volume24hr: 25000,
+          active: true,
+          closed: false,
+          category: 'crypto',
+          oneDayPriceChange: 0.05,
+        },
+      ]);
+    }
+
+    if (url.includes('api.elections.kalshi.com')) {
+      return jsonResponse({ markets: [] });
+    }
+
+    if (url.includes('data-api.polymarket.com')) {
+      const parsed = new URL(url);
+      assert.equal(parsed.pathname, '/trades');
+      return jsonResponse({ error: 'upstream unavailable' }, 500);
+    }
+
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  });
+
+  try {
+    const response = createResponse();
+    await smartMoneyHandler({
+      method: 'GET',
+      query: {
+        category: 'crypto',
+        window: '24h',
+        minVolume: '0.01',
+        limit: '1',
+      },
+    }, response);
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.body.success, false);
+    assert.match(response.body.error, /temporarily unavailable/i);
   } finally {
     restoreFetch();
     walletCacheModule.clearWalletMemoryCache();
