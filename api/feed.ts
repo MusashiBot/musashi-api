@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalyzedTweet, FeedResponse, AccountCategory } from '../src/types/feed';
 import { batchGetFromKV, setFeedCache, getFeedCache, getFeedCacheTimestamp } from './lib/cache-helper';
 import { kv } from './lib/vercel-kv';
+import { checkRateLimit } from './lib/rate-limit';
 
 // ─── KV Storage Keys ───────────────────────────────────────────────────────
 
@@ -75,6 +76,8 @@ export default async function handler(
     });
     return;
   }
+
+  if (!await checkRateLimit(req, res)) return;
 
   try {
     // Parse query parameters

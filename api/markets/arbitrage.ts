@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import { checkRateLimit } from '../lib/rate-limit';
 
 export default async function handler(
   req: VercelRequest,
@@ -25,6 +26,8 @@ export default async function handler(
     });
     return;
   }
+
+  if (!await checkRateLimit(req, res)) return;
 
   const startTime = Date.now();
 

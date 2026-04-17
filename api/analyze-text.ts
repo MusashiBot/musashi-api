@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { checkRateLimit } from './lib/rate-limit';
 
 function isMalformedJsonError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -47,6 +48,8 @@ export default async function handler(
     });
     return;
   }
+
+  if (!await checkRateLimit(req, res)) return;
 
   const startTime = Date.now();
 

@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { getMarkets, getMarketMetadata } from './lib/market-cache';
 import { Market, MarketMatch } from '../src/types/market';
+import { checkRateLimit } from './lib/rate-limit';
 
 /**
  * Ground Probability Endpoint
@@ -165,6 +166,8 @@ export default async function handler(
     });
     return;
   }
+
+  if (!await checkRateLimit(req, res)) return;
 
   const startTime = Date.now();
 
