@@ -955,8 +955,6 @@ function extractNumericContexts(text: string): Set<string> {
   return contexts;
 }
 
-const DENOMINATOR_CAP = 5;
-
 interface MatchCounts {
   exactMatches:   number; // tweet token directly matches market keyword
   synonymMatches: number; // tweet token matched via synonym expansion
@@ -978,7 +976,7 @@ function computeScore(r: MatchCounts, market: Market, matchedKeywords: string[])
 
   // Normalize by keyword list length, capped to avoid penalizing markets
   // that happen to have many keywords from description extraction.
-  const denominator = Math.min(r.totalChecked, DENOMINATOR_CAP);
+  const denominator = Math.max(1, Math.log10(r.totalChecked) * 2);
   const normalized = weighted / denominator;
 
   const totalMatched = r.exactMatches + r.synonymMatches + r.titleMatches + r.entityMatches;
@@ -1128,24 +1126,20 @@ export class KeywordMatcher {
     for (const mk of explicitKeywords) {
       if (mk.includes(' ')) {
         if (hasWordBoundaryMatch(Array.from(rawTokenSet).join(' '), mk)) {
-          exactMatches++;
           multiWordMatches++;
-
-          // Check if this is an entity match
           if (isEntity(mk, entities)) {
             entityMatches++;
+          } else {
+            exactMatches++;
           }
-
           matchedKeywords.push(mk);
         } else if (hasWordBoundaryMatch(Array.from(expandedTokenSet).join(' '), mk)) {
-          synonymMatches++;
           multiWordMatches++;
-
-          // Check if this is an entity match
           if (isEntity(mk, entities)) {
             entityMatches++;
+          } else {
+            synonymMatches++;
           }
-
           matchedKeywords.push(mk);
         }
       }
@@ -1155,17 +1149,13 @@ export class KeywordMatcher {
     for (const mk of explicitKeywords) {
       if (!mk.includes(' ') && !matchedKeywords.includes(mk)) {
         if (expandedTokenSet.has(mk)) {
-          if (rawTokenSet.has(mk)) {
+          if (isEntity(mk, entities)) {
+            entityMatches++;
+          } else if (rawTokenSet.has(mk)) {
             exactMatches++;
           } else {
             synonymMatches++;
           }
-
-          // Check if this is an entity match (people, tickers, orgs)
-          if (isEntity(mk, entities)) {
-            entityMatches++;
-          }
-
           matchedKeywords.push(mk);
         }
       }
@@ -1177,13 +1167,11 @@ export class KeywordMatcher {
     const titleTokens = extractTitleTokens(market.title);
     for (const tt of titleTokens) {
       if (!matchedKeywords.includes(tt) && expandedTokenSet.has(tt)) {
-        titleMatches++;
-
-        // Check if this is an entity match
         if (isEntity(tt, entities)) {
           entityMatches++;
+        } else {
+          titleMatches++;
         }
-
         matchedKeywords.push(tt);
       }
     }
