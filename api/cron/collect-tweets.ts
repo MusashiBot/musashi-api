@@ -61,8 +61,9 @@ export default async function handler(
   }
 
   // Verify cron secret (Vercel sends this header for authenticated cron calls)
-  const cronSecret = req.headers.authorization?.replace('Bearer ', '');
-  if (cronSecret !== process.env.CRON_SECRET) {
+  const cronSecret = req.headers.authorization?.replace('Bearer ', '') ?? '';
+  const expectedSecret = process.env.CRON_SECRET ?? '';
+  if (!expectedSecret || cronSecret !== expectedSecret) {
     console.error('[Cron] Unauthorized: Invalid CRON_SECRET');
     res.status(401).json({
       success: false,
