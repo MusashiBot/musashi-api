@@ -181,10 +181,10 @@ export default async function handler(
     }
 
     // Validate claim
-    if (!body.claim || typeof body.claim !== 'string') {
+    if (!body.claim?.trim() || typeof body.claim !== 'string') {
       res.status(400).json({
         success: false,
-        error: 'Missing or invalid "claim" field. Must be a string.',
+        error: 'Missing or invalid "claim" field. Must be a non-empty string.',
       });
       return;
     }
@@ -217,8 +217,13 @@ export default async function handler(
       claim,
       llm_estimate = null,
       min_confidence = 0.3,
-      max_markets = 5,
     } = body;
+
+    // Clamp max_markets to [1, 20] rather than rejecting — any numeric input
+    // produces a valid result; NaN/undefined/out-of-range all fall back to 5.
+    const max_markets = Number.isFinite(body.max_markets)
+      ? Math.max(1, Math.min(20, body.max_markets as number))
+      : 5;
 
     // Validate numeric parameters
     if (
@@ -230,19 +235,6 @@ export default async function handler(
       res.status(400).json({
         success: false,
         error: 'min_confidence must be between 0 and 1.',
-      });
-      return;
-    }
-
-    if (
-      typeof max_markets !== 'number' ||
-      !Number.isFinite(max_markets) ||
-      max_markets < 1 ||
-      max_markets > 20
-    ) {
-      res.status(400).json({
-        success: false,
-        error: 'max_markets must be between 1 and 20.',
       });
       return;
     }
