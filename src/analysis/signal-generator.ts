@@ -69,20 +69,32 @@ function calculateImpliedProbability(sentiment: SentimentResult): number {
 }
 
 /**
- * Calculate trading edge for a market given sentiment
- * Edge = how much the sentiment-implied probability differs from market price
+ * Calculate trading edge for a market given sentiment and keyword match quality.
+ *
+ * Edge = effective confidence × price gap between implied and market price.
+ *
+ * Previously only sentiment.confidence was used, which collapsed to 0 for
+ * factual news (e.g. "Trump announces peace deal") because those phrases don't
+ * appear in the sentiment keyword lists. A confidence-1.0 keyword match IS
+ * itself an edge signal — the text is unambiguously about this market.
+ * We now take the stronger of the two confidence signals.
  */
-function calculateEdge(market: Market, sentiment: SentimentResult): number {
+function calculateEdge(
+  market: Market,
+  sentiment: SentimentResult,
+  matchConfidence: number = 0
+): number {
   const impliedProb = calculateImpliedProbability(sentiment);
   const currentPrice = market.yesPrice;
 
-  // Raw difference between implied and actual price
   const priceDiff = Math.abs(impliedProb - currentPrice);
 
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
+  // Use whichever confidence signal is stronger:
+  // - matchConfidence: how precisely the text is about this market
+  // - sentiment.confidence: how strongly directional the language is
+  const effectiveConfidence = Math.max(sentiment.confidence, matchConfidence);
 
-  return edge;
+  return effectiveConfidence * priceDiff;
 }
 
 /**
@@ -170,7 +182,8 @@ function generateSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
   edge: number,
-  urgency: UrgencyLevel
+  urgency: UrgencyLevel,
+  matchConfidence: number = 0
 ): SuggestedAction {
   // Don't suggest action if edge is too low
   if (edge < 0.10) {
@@ -189,8 +202,17 @@ function generateSuggestedAction(
   let reasoning: string;
 
   if (sentiment.sentiment === 'neutral') {
-    direction = 'HOLD';
-    reasoning = 'Neutral sentiment, no clear directional bias';
+    // Neutral sentiment (e.g. factual news): use price gap + match confidence as the signal
+    if (impliedProb > currentPrice) {
+      direction = 'YES';
+      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES underpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
+    } else if (impliedProb < currentPrice) {
+      direction = 'NO';
+      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES overpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
+    } else {
+      direction = 'HOLD';
+      reasoning = 'Neutral sentiment with no significant price gap';
+    }
   } else if (sentiment.sentiment === 'bullish') {
     // Bullish sentiment
     if (impliedProb > currentPrice) {
@@ -274,7 +296,7 @@ export function generateSignal(
   const topMarket = topMatch.market;
 
   // Calculate edge
-  const edge = calculateEdge(topMarket, sentiment);
+  const edge = calculateEdge(topMarket, sentiment, topMatch.confidence);
 
   // Compute urgency
   const urgency = computeUrgency(
@@ -288,7 +310,7 @@ export function generateSignal(
   const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
 
   // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
+  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency, topMatch.confidence);
 
   return {
     event_id: generateEventId(tweetText),
