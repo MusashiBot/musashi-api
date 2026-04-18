@@ -135,6 +135,7 @@ function toMarket(pm: PolymarketMarket): Market {
 
   const safeYes = Math.min(Math.max(yesPrice, 0.01), 0.99);
   const safeNo  = +((1 - safeYes).toFixed(2));
+  const roundedYes = +safeYes.toFixed(2);
 
   return {
     id: `polymarket-${pm.conditionId}`,
@@ -142,8 +143,12 @@ function toMarket(pm: PolymarketMarket): Market {
     title: pm.question,
     description: pm.description ?? '',
     keywords: generateKeywords(pm.question, pm.description),
-    yesPrice: +safeYes.toFixed(2),
+    yesPrice: roundedYes,
     noPrice: safeNo,
+    // Gamma's market list exposes indicative outcome prices, not a live CLOB
+    // book. Treat them as conservative asks for paper-trading comparison.
+    yesAsk: roundedYes,
+    noAsk: safeNo,
     volume24h: pm.volume24hr ?? 0,
     url: `https://polymarket.com/event/${pm.events?.[0]?.slug ?? pm.slug}`,
     category: inferCategory(pm.question, pm.category),
@@ -165,11 +170,12 @@ function inferCategory(question: string, apiCategory?: string): string {
   }
 
   const q = question.toUpperCase();
+  if (/LEAGUE OF LEGENDS|LCK|LOL|VALORANT|ESPORT|RIOT GAMES|DOTA|COUNTER-STRIKE|CS2/.test(q)) return 'esports';
   if (/BTC|ETH|CRYPTO|SOL|XRP|DOGE|BITCOIN|ETHEREUM/.test(q)) return 'crypto';
   if (/FED|CPI|GDP|INFLATION|RATE|RECESSION|UNEMP|JOBS/.test(q))  return 'economics';
   if (/TRUMP|BIDEN|HARRIS|PRES|CONGRESS|SENATE|ELECT|GOP|DEM|HOUSE/.test(q)) return 'us_politics';
   if (/NVDA|AAPL|MSFT|GOOGLE|META|AMAZON|AI|OPENAI|TECH|TESLA/.test(q)) return 'technology';
-  if (/NFL|NBA|MLB|NHL|SUPER BOWL|WORLD CUP|FIFA|GOLF|TENNIS/.test(q)) return 'sports';
+  if (/NFL|NBA|MLB|NHL|SUPER BOWL|WORLD CUP|FIFA|GOLF|TENNIS|UEFA|CHAMPIONS LEAGUE|PREMIER LEAGUE|BASEBALL|SOCCER|FOOTBALL/.test(q)) return 'sports';
   if (/CLIMATE|WEATHER|CARBON|ENERGY|OIL/.test(q)) return 'climate';
   if (/UKRAINE|RUSSIA|CHINA|NATO|TAIWAN|ISRAEL|GAZA|IRAN/.test(q)) return 'geopolitics';
   return 'other';
