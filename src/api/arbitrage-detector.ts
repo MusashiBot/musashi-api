@@ -246,8 +246,8 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   ]);
   const sharedTopicWords = [...directMatches, ...synonymBridges]
     .filter(w => !/^\d{4}$/.test(w) && !TIMEFRAME_TOKENS.has(w));
-  if (sharedTopicWords.length === 0) {
-    return { isSimilar: false, confidence: 0, reason: 'No shared topic words (only date/year overlap)' };
+  if (sharedTopicWords.length < 2) {
+    return { isSimilar: false, confidence: 0, reason: `Only ${sharedTopicWords.length} shared topic word(s) (need 2)` };
   }
 
   // Gate 5: Dice coefficient (F1 / harmonic-mean overlap) ≥ 0.60.
