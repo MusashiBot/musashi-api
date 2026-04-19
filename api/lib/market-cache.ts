@@ -9,6 +9,7 @@ import { fetchPolymarkets } from '../../src/api/polymarket-client';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
 import { FreshnessMetadata, SourceStatus } from './types';
+import { kv } from '@vercel/kv';
 
 // In-memory cache for markets
 // Default: 20 seconds (configurable via MARKET_CACHE_TTL_SECONDS env var)
@@ -42,6 +43,9 @@ const POLYMARKET_TARGET_COUNT = 100;
 const POLYMARKET_MAX_PAGES = 3;
 const KALSHI_TARGET_COUNT = 100;
 const KALSHI_MAX_PAGES = 3;
+
+const LOCK_KEY = 'arb_recompute_lock';
+const LOCK_TTL = 20000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -174,34 +178,28 @@ export function getMarketMetadata(): FreshnessMetadata {
  */
 export async function getArbitrage(minNetEdgeBps: number = 50): Promise<ArbitrageOpportunity[]> {
   const now = Date.now();
-
-  // If a refresh is already in progress, return the existing promise
-  if (arbRefreshPromise) {
-    const opportunities = await arbRefreshPromise;
-    return opportunities.filter(arb => (arb.netEdgeBps ?? 0) >= minNetEdgeBps);
-  }
-
-  // Recompute if cache is empty or stale
+  
+  // Distributed Lock Pattern
   if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
-    arbRefreshPromise = (async () => {
+    const instanceId = Math.random().toString(36);
+    const locked = await kv.set(LOCK_KEY, instanceId, { nx: true, ex: 30 });
+
+    if (locked) {
       try {
         const markets = await getMarkets();
-        console.log('[Arbitrage Cache] Computing arbitrage opportunities...');
-        // Cache with low threshold (10 bps) so we can filter client-side
         cachedArbitrage = detectArbitrage(markets, 10);
         arbCacheTimestamp = Date.now();
-        return cachedArbitrage;
+        // Sync to Redis for other lambdas
+        await kv.set('global_arb_cache', cachedArbitrage, { ex: 60 });
       } finally {
-        arbRefreshPromise = null;
+        await kv.del(LOCK_KEY);
       }
-    })();
-    
-    await arbRefreshPromise;
+    } else {
+      // If locked by another instance try to read their global cache
+      const remote = await kv.get<ArbitrageOpportunity[]>('global_arb_cache');
+      if (remote) return remote.filter(a => a.netEdgeBps >= minNetEdgeBps);
+    }
   }
 
-  // Filter cached results by requested minNetEdgeBps (V1.5 logic)
-  const filtered = cachedArbitrage.filter(arb => (arb.netEdgeBps ?? 0) >= minNetEdgeBps);
-  console.log(`[Arbitrage Cache] Returning ${filtered.length}/${cachedArbitrage.length} opportunities (minNetEdgeBps: ${minNetEdgeBps})`);
-
-  return filtered;
+  return cachedArbitrage.filter(arb => arb.netEdgeBps >= minNetEdgeBps);
 }

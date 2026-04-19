@@ -36,14 +36,13 @@ export default async function handler(
     // Parse query parameters
     const {
       mode = 'fast',
-      minSpread = '0.03',
+      maxDataAgeMs,
       minNetEdgeBps,
-      minConfidence = '0.5',
+      minSpread,
       limit = '20',
-      category,
     } = req.query;
 
-    let effectiveMinBps = 50;
+    let effectiveMinBps = minNetEdgeBps ? Number(minNetEdgeBps) : Math.round(parseFloat(minSpread as string) * 10000);
     if (minNetEdgeBps) {
       effectiveMinBps = Number(minNetEdgeBps);
     } else {
@@ -53,7 +52,7 @@ export default async function handler(
     const minConfidenceNum = parseFloat(minConfidence as string);
     const limitNum = Math.min(parseInt(limit as string, 10), 100);
 
-    let opportunities = await getArbitrage(effectiveMinBps);
+    const opportunities = await getArbitrage(effectiveMinBps);
 
     if (category || minConfidenceNum > 0) {
       opportunities = opportunities.filter(arb => {
@@ -67,32 +66,26 @@ export default async function handler(
 
     const result = opportunities.slice(0, limitNum);
     const freshness = getMarketMetadata();
-
-    res.status(200).json({
-      success: true,
-      metadata: {
-        processing_time_ms: Date.now() - startTime,
-        data_age_seconds: freshness.data_age_seconds,
-        fetched_at: freshness.fetched_at,
-        mode,
-        thresholds: {
-          applied_net_edge_bps: effectiveMinBps,
-          min_confidence: minConfidenceNum
-        },
-        markets_analyzed: freshness.sources.polymarket.market_count + freshness.sources.kalshi.market_count,
-        sources: freshness.sources
-      },
-      data: {
-        count: result.length,
-        opportunities: result
-      }
-    });
-
-  } catch (error) {
-    console.error('[Arbitrage API] Error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Internal server error',
-    });
+// Item 1: Max Data Age Enforcement
+  if (maxDataAgeMs && freshness.data_age_seconds * 1000 > Number(maxDataAgeMs)) {
+    return res.status(200).json({ success: true, data: { opportunities: [], count: 0 }, metadata: { degraded: true }});
   }
+
+  // Item 2: Mode Payload Stripping
+  let finalOpps = opportunities.slice(0, Number(limit));
+  if (mode === 'fast') {
+    finalOpps = finalOpps.map(o => ({
+      pair: `${o.polymarket.id}:${o.kalshi.id}`,
+      netEdgeBps: o.netEdgeBps,
+      buy: o.buyVenue,
+      sell: o.sellVenue,
+      confidence: o.matchConfidence.score
+    }));
+  }
+
+  // Item 16: Log JSON for Observability
+  console.log(JSON.stringify({ event: 'arb_req', duration: Date.now() - startTime, count: finalOpps.length }));
+
+  return res.status(200).json({ success: true, metadata: { ...freshness, mode }, data: finalOpps });
+}
 }

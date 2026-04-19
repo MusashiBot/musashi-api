@@ -4,17 +4,15 @@ export interface Market {
   id: string;
   platform: 'kalshi' | 'polymarket';
   title: string;
-  description: string;
-  keywords: string[];
-  yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
-  noPrice: number;  // 0.0 to 1.0 (0.35 = 35%)
-  volume24h: number; // 24h trading volume in dollars
-  url: string;
   category: string;
-  lastUpdated: string; // ISO timestamp
-  numericId?: string;          // Polymarket numeric ID for live price polling
-  oneDayPriceChange?: number;  // 24h price delta for YES (e.g. 0.05 = +5%)
-  endDate?: string;            // ISO date string (e.g. "2026-03-31")
+  yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
+  yesBid?: number; 
+  yesAsk?: number;
+  volume24h: number; // 24h trading volume in dollars
+  liquidity?: number;
+  endDate?: string; // ISO date string (e.g. "2026-03-31")
+  keywords: string[];
+  lastUpdated?: string; // ISO timestamp
 }
 
 export interface MarketMatch {
@@ -24,23 +22,28 @@ export interface MarketMatch {
 }
 
 export interface ArbitrageOpportunity {
-  polymarket: Market;
+
+polymarket: Market;
   kalshi: Market;
   buyPrice: number;
   sellPrice: number;
-  buyVenue: 'polymarket' | 'kalshi';
-  sellVenue: 'polymarket' | 'kalshi';
+  buyVenue: string;
+  sellVenue: string;
   netEdgeBps: number;
   grossEdgeBps: number;
-  estimatedFeesBps: number;
-  slippageBps: number;
-  latencyRiskBps: number;
-  confidence: number; // 0-1, how confident we are this is the same event
-  matchReason: string; // Why we think these are the same market
-  liquidityScore: number;
-  expiryDeltaMinutes: number;
+  matchConfidence: {
+    score: number;
+    titleSimilarity: number;
+    keywordOverlap: number;
+    categoryAligned: boolean;
+    expiryAligned: boolean;
+  };
+  sourceTimestamps: {
+    polymarket: string | null;
+    kalshi: string | null;
+  };
+  expiryDeltaMinutes: number | null;
   asOfTs: string;
-  spread: number; // Absolute price difference (e.g., 0.05 = 5%)
-  profitPotential: number; // Expected profit per $1 invested
-  direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
+  liquidityScore: number;
+
 }

@@ -174,6 +174,10 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   return { isSimilar: false, confidence: 0, reason: 'Insufficient similarity' };
 }
 
+const FEE_POLY_BPS = Number(process.env.ARB_POLY_FEE_BPS || 20);
+const FEE_KALSHI_BPS = Number(process.env.ARB_KALSHI_FEE_BPS || 15);
+const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
+
 /**
  * Detect arbitrage opportunities
  *
@@ -181,42 +185,52 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
  * @param minNetEdgeBps - Minimum basis points profit (default, 50bps/0.5%)
  */
 export function detectArbitrage(
-  markets: Market[],
-  minNetEdgeBps: number = 50
+  markets: Market[], 
+  minNetEdgeBps: number = 10
 ): ArbitrageOpportunity[] {
-    const opportunities: ArbitrageOpportunity[] = [];
+  const opportunities: ArbitrageOpportunity[] = [];
+  const polyByCat = groupByCategory(markets.filter(m => m.platform === 'polymarket'));
+  const kalshiByCat = groupByCategory(markets.filter(m => m.platform === 'kalshi'));
 
-    // Separate markets by platform
-    const polyByCat = groupByCategory(markets.filter(m => m.platform === 'polymarket'));
-    const kalshiByCat = groupByCategory(markets.filter(m => m.platform === 'kalshi'));
-
-    // Compare each Polymarket market with each Kalshi market
-    for (const cat in polyByCat) {
-      if (!kalshiByCat[cat]) continue;
-
-      for (const poly of polyByCat[cat]) {
-        for (const kalshi of kalshiByCat[cat]) {
-        // Date Check
+  for (const cat in polyByCat) {
+    if (!kalshiByCat[cat]) continue;
+    for (const poly of polyByCat[cat]) {
+      for (const kalshi of kalshiByCat[cat]) {
+        
+        // Expiry Delta
+        let expiryDeltaMinutes: number | null = null;
         if (poly.endDate && kalshi.endDate) {
-          const delta = Math.abs(new Date(poly.endDate).getTime() - new Date(kalshi.endDate).getTime());
-          if (delta > 86400000) continue;
+          expiryDeltaMinutes = Math.abs(new Date(poly.endDate).getTime() - new Date(kalshi.endDate).getTime()) / 60000;
+          if (expiryDeltaMinutes > 1440) continue;
         }
 
-        const similarity = areMarketsSimilar(poly, kalshi);
+        const sim = areMarketsSimilar(poly, kalshi);
+        if (!sim.isSimilar) continue;
 
-        if (!similarity.isSimilar) continue;
+        // Executable Edge (Buy at Ask, Sell at Bid)
+        const polyBuy = poly.yesAsk ?? poly.yesPrice;
+        const polySell = poly.yesBid ?? poly.yesPrice;
+        const kalshiBuy = kalshi.yesAsk ?? kalshi.yesPrice;
+        const kalshiSell = kalshi.yesBid ?? kalshi.yesPrice;
 
+        const edgePolyBuy = kalshiSell - polyBuy;
+        const edgeKalshiBuy = polySell - kalshiBuy;
 
-        // Math
-        const isPolyCheaper = poly.yesPrice < kalshi.yesPrice;
-        const buyPrice = isPolyCheaper ? poly.yesPrice : kalshi.yesPrice;
-        const sellPrice = isPolyCheaper ? kalshi.yesPrice : poly.yesPrice;
+        const isPolyCheaper = edgePolyBuy > edgeKalshiBuy;
+        const buyPrice = isPolyCheaper ? polyBuy : kalshiBuy;
+        const sellPrice = isPolyCheaper ? kalshiSell : polySell;
+        
+        // Summed Venue Fees
+        const totalFees = FEE_POLY_BPS + FEE_KALSHI_BPS + SLIPPAGE_BPS;
+        const grossBps = ((sellPrice - buyPrice) / buyPrice) * 10000;
+        const netEdge = grossBps - totalFees;
 
-        const { grossBps, netEdgeBps } = calculateNedEdge(buyPrice, sellPrice);
+        if (netEdge < minNetEdgeBps) continue;
 
-        if (netEdgeBps < minNetEdgeBps) continue;
+        // Real Liquidity Score
+        const combinedVol = (poly.volume24h || 0) + (kalshi.volume24h || 0);
+        if (combinedVol < Number(process.env.ARB_MIN_VOL || 500)) continue;
 
-        // V1.5 Objects
         opportunities.push({
           polymarket: poly,
           kalshi: kalshi,
@@ -224,26 +238,33 @@ export function detectArbitrage(
           sellPrice,
           buyVenue: isPolyCheaper ? 'polymarket' : 'kalshi',
           sellVenue: isPolyCheaper ? 'kalshi' : 'polymarket',
-          netEdgeBps,
-          grossEdgeBps: grossBps,
-          estimatedFeesBps: FEES_BPS,
-          slippageBps: SLIPPAGE_BPS,
-          latencyRiskBps: LATENCY_BPS,
-          confidence: similarity.confidence,
-          matchReason: similarity.reason,
-          liquidityScore: 0.5,
-          expiryDeltaMinutes: poly.endDate ? Math.floor((new Date(poly.endDate).getTime() - Date.now()) / 60000) :0,
+          netEdgeBps: Math.round(netEdge),
+          grossEdgeBps: Math.round(grossBps),
+          matchConfidence: {
+            score: sim.confidence,
+            titleSimilarity: sim.titleSim,
+            keywordOverlap: sim.keywordOverlap,
+            categoryAligned: true,
+            expiryAligned: (expiryDeltaMinutes || 0) < 60
+          },
+          sourceTimestamps: {
+            polymarket: poly.lastUpdated || null,
+            kalshi: kalshi.lastUpdated || null
+          },
+          expiryDeltaMinutes,
           asOfTs: new Date().toISOString(),
-          // Calculate spread
-          spread: sellPrice - buyPrice,
-
-          profitPotential: (sellPrice - buyPrice),
-          direction: isPolyCheaper ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly'
+          liquidityScore: Math.min(combinedVol / 10000, 1)
         });
       }
     }
   }
-  return opportunities.sort((a, b) => b.netEdgeBps - a.netEdgeBps);
+
+  // Deterministic Sort + Tie-break
+  return opportunities.sort((a, b) => {
+    if (b.netEdgeBps !== a.netEdgeBps) return b.netEdgeBps - a.netEdgeBps;
+    if (b.matchConfidence.score !== a.matchConfidence.score) return b.matchConfidence.score - a.matchConfidence.score;
+    return `${a.polymarket.id}${a.kalshi.id}`.localeCompare(`${b.polymarket.id}${b.kalshi.id}`);
+  });
 }
 
 /**
