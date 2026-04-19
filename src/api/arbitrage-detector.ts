@@ -25,7 +25,8 @@ function calculateNedEdge(buyPrice: number, sellPrice: number) {
 }
 
 /**
- & Helper to group markets by category for faster scanning (O(N) vs O(N*M))
+ * & Helper to group markets by category for faster scanning (O(N) vs O(N*M))
+ */
 function groupByCategory(markets: Market[]): Record<string, Market[]> {
   return markets.reduce((acc, market) => {
     const cat = market.category || 'other';
