@@ -3,6 +3,7 @@
 
 import { Market, MarketMatch, ArbitrageOpportunity } from '../types/market';
 import { analyzeSentiment, SentimentResult } from './sentiment-analyzer';
+import type { MarketWalletFlow } from '../types/wallet';
 
 export type SignalType = 'arbitrage' | 'news_event' | 'sentiment_shift' | 'user_interest';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -53,6 +54,10 @@ function isBreakingNews(text: string): boolean {
  * Calculate implied probability from sentiment
  * Bullish sentiment implies higher YES probability
  * Bearish sentiment implies lower YES probability (higher NO)
+ *
+ * The shift is intentionally conservative (max ±15 percentage points when confidence = 1.0).
+ * Social-media sentiment rarely justifies moving a probability by more than
+ * that, and overclaiming here leads to spurious high-confidence signals.
  */
 function calculateImpliedProbability(sentiment: SentimentResult): number {
   if (sentiment.sentiment === 'neutral') {
@@ -60,17 +65,17 @@ function calculateImpliedProbability(sentiment: SentimentResult): number {
   }
 
   if (sentiment.sentiment === 'bullish') {
-    // Bullish: high confidence = higher YES probability
-    return 0.5 + (sentiment.confidence * 0.4); // Range: 0.5 to 0.9
+    // Bullish: high confidence = higher YES probability (max +15pp)
+    return 0.5 + (sentiment.confidence * 0.15); // Range: 0.5 to 0.65
   }
 
-  // Bearish: high confidence = lower YES probability
-  return 0.5 - (sentiment.confidence * 0.4); // Range: 0.1 to 0.5
+  // Bearish: high confidence = lower YES probability (max -15pp)
+  return 0.5 - (sentiment.confidence * 0.15); // Range: 0.1 to 0.5 **messing with percentages
 }
 
 /**
- * Calculate trading edge for a market given sentiment
- * Edge = how much the sentiment-implied probability differs from market price
+ * Calculate trading edge for a market given sentiment.
+ * Includes a (1 - price) factor to reduce overconfidence in high-priced markets.
  */
 function calculateEdge(market: Market, sentiment: SentimentResult): number {
   const impliedProb = calculateImpliedProbability(sentiment);
@@ -79,11 +84,111 @@ function calculateEdge(market: Market, sentiment: SentimentResult): number {
   // Raw difference between implied and actual price
   const priceDiff = Math.abs(impliedProb - currentPrice);
 
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
+  // Weight by sentiment confidence and dampen in high-priced markets
+  const edge = sentiment.confidence * priceDiff * (1 - currentPrice);
 
   return edge;
 }
+
+/**
+ * Convert a wallet-flow net direction into the buy/sell/neutral vocabulary
+ * used by the decision gate and confidence adjuster.
+ */
+function deriveSmartMoneyDirection(
+  flow: MarketWalletFlow,
+): 'buy' | 'sell' | 'neutral' {
+  if (flow.netDirection === 'YES') return 'buy';
+  if (flow.netDirection === 'NO') return 'sell';
+  return 'neutral';
+}
+
+/**
+ * Decision gate – all conditions must pass before a trade is suggested.
+ *
+ * Priority order:
+ *  1. Strong arbitrage always passes.
+ *  2. Weak sentiment is rejected.
+ *  3. Insufficient edge is rejected.
+ *  4. Smart-money direction that contradicts sentiment is rejected.
+ */
+function passesDecisionGate(
+  sentiment: SentimentResult,
+  edge: number,
+  arbitrage?: ArbitrageOpportunity,
+  smartMoneyDirection?: 'buy' | 'sell' | 'neutral'
+): boolean {
+  // 1. Arbitrage with meaningful spread always passes
+  if (arbitrage && arbitrage.spread > 0.03) return true;
+
+  // 2. Weak sentiment → reject
+  if (sentiment.confidence < 0.6) return false;
+
+  // 3. Edge too small → reject
+  if (edge < 0.05) return false;
+
+  // 4. Smart money disagrees with sentiment → reject
+  if (smartMoneyDirection) {
+    if (
+      (sentiment.sentiment === 'bullish' && smartMoneyDirection === 'sell') ||
+      (sentiment.sentiment === 'bearish' && smartMoneyDirection === 'buy')
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+const WEAK_SENTIMENT_CONFIDENCE_THRESHOLD = 0.7;
+const WEAK_SENTIMENT_CONFIDENCE_PENALTY = 0.7;
+
+/**
+ * Adjust confidence based on signal quality.
+ * Penalizes weak sentiment and boosts when arbitrage or smart-money agree.
+ */
+function adjustConfidence(
+  base: number,
+  sentiment: SentimentResult,
+  hasArbitrage: boolean,
+  smartMoneyAgreement: boolean
+): number {
+  let conf = base;
+
+  // Penalize weak sentiment
+  if (sentiment.confidence < WEAK_SENTIMENT_CONFIDENCE_THRESHOLD) conf *= WEAK_SENTIMENT_CONFIDENCE_PENALTY;
+
+  // Boost if arbitrage is present
+  if (hasArbitrage) conf = Math.min(conf * 1.5, 0.95);
+
+  // Boost if smart money agrees
+  if (smartMoneyAgreement) conf = Math.min(conf * 1.3, 0.9);
+
+  return conf;
+}
+
+/**
+ * Determine trade direction with a buffer to avoid noise trades.
+ * Returns HOLD when sentiment is neutral or the edge vs price is within the buffer.
+ */
+function getDirection(
+  sentiment: SentimentResult,
+  impliedProb: number,
+  price: number,
+  buffer = 0.03
+): Direction {
+  if (sentiment.sentiment === 'neutral') return 'HOLD';
+
+  if (sentiment.sentiment === 'bullish' && impliedProb > price + buffer) {
+    return 'YES';
+  }
+
+  if (sentiment.sentiment === 'bearish' && impliedProb < price - buffer) {
+    return 'NO';
+  }
+
+  return 'HOLD';
+}
+
 
 /**
  * Check if market expires soon (within 7 days)
@@ -100,6 +205,9 @@ function expiresSoon(market: Market): boolean {
 
 /**
  * Compute urgency level based on edge, volume, and expiry
+ *
+ * Edge thresholds are calibrated to the conservative implied-probability shift
+ * (max ±15pp), so max possible sentiment edge ≈ 0.15.
  */
 function computeUrgency(
   edge: number,
@@ -113,12 +221,12 @@ function computeUrgency(
     return 'critical';
   }
 
-  if (edge > 0.15 && market.volume24h > 500000 && expiresSoon(market)) {
+  if (edge > 0.08 && market.volume24h > 500000 && expiresSoon(market)) {
     return 'critical';
   }
 
   // High: Good edge OR moderate arbitrage
-  if (edge > 0.10) {
+  if (edge > 0.06) {
     return 'high';
   }
 
@@ -127,7 +235,7 @@ function computeUrgency(
   }
 
   // Medium: Decent edge
-  if (edge > 0.05) {
+  if (edge > 0.03) {
     return 'medium';
   }
 
@@ -164,64 +272,76 @@ function computeSignalType(
 }
 
 /**
- * Generate suggested trading action
+ * Generate suggested trading action.
+ *
+ * Uses the decision gate, direction buffer, and confidence adjustment helpers
+ * to produce a higher-quality signal than a simple edge threshold check.
  */
 function generateSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
   edge: number,
-  urgency: UrgencyLevel
+  urgency: UrgencyLevel,
+  arbitrage?: ArbitrageOpportunity,
+  topMatchConfidence?: number,
+  smartMoneyFlow?: MarketWalletFlow
 ): SuggestedAction {
-  // Don't suggest action if edge is too low
-  if (edge < 0.10) {
+  // Scale edge by the top match confidence so better matches produce stronger signals
+  const scaledEdge = topMatchConfidence !== undefined ? edge * topMatchConfidence : edge;
+
+  // Derive smart-money direction from wallet-flow data when available
+  const smartMoneyDirection = smartMoneyFlow
+    ? deriveSmartMoneyDirection(smartMoneyFlow)
+    : undefined;
+
+  // Run through multi-factor decision gate before committing to a trade
+  if (!passesDecisionGate(sentiment, scaledEdge, arbitrage, smartMoneyDirection)) {
     return {
       direction: 'HOLD',
       confidence: 0,
       edge: 0,
-      reasoning: 'Insufficient edge to justify a trade',
+      reasoning: 'Signal did not pass decision gate (weak sentiment, insufficient edge, or contradictory signals)',
     };
   }
 
   const impliedProb = calculateImpliedProbability(sentiment);
   const currentPrice = market.yesPrice;
 
-  let direction: Direction;
-  let reasoning: string;
+  // Use buffered direction to avoid noise trades
+  const direction = getDirection(sentiment, impliedProb, currentPrice);
 
-  if (sentiment.sentiment === 'neutral') {
-    direction = 'HOLD';
+  let reasoning: string;
+  if (direction === 'YES') {
+    reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
+  } else if (direction === 'NO') {
+    reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
+  } else if (sentiment.sentiment === 'neutral') {
     reasoning = 'Neutral sentiment, no clear directional bias';
-  } else if (sentiment.sentiment === 'bullish') {
-    // Bullish sentiment
-    if (impliedProb > currentPrice) {
-      // YES is underpriced
-      direction = 'YES';
-      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bullish sentiment but YES already priced high';
-    }
   } else {
-    // Bearish sentiment
-    if (impliedProb < currentPrice) {
-      // YES is overpriced, buy NO
-      direction = 'NO';
-      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bearish sentiment but YES already priced low';
-    }
+    reasoning = 'Price already reflects sentiment direction (within noise buffer)';
   }
 
-  // Confidence based on edge and urgency
-  let actionConfidence = edge;
-  if (urgency === 'critical') actionConfidence = Math.min(edge * 1.5, 0.95);
-  else if (urgency === 'high') actionConfidence = Math.min(edge * 1.2, 0.9);
+  // Determine whether smart money agrees with the sentiment direction
+  const smartMoneyAgreement =
+    smartMoneyDirection !== undefined &&
+    smartMoneyDirection !== 'neutral' &&
+    ((sentiment.sentiment === 'bullish' && smartMoneyDirection === 'buy') ||
+      (sentiment.sentiment === 'bearish' && smartMoneyDirection === 'sell'));
+
+  // Build adjusted confidence from multiple signals
+  const hasArbitrage = !!arbitrage;
+  const baseConfidence = urgency === 'critical'
+    ? Math.min(scaledEdge * 1.5, 0.95)
+    : urgency === 'high'
+      ? Math.min(scaledEdge * 1.2, 0.9)
+      : scaledEdge;
+
+  const actionConfidence = adjustConfidence(baseConfidence, sentiment, hasArbitrage, smartMoneyAgreement);
 
   return {
     direction,
     confidence: actionConfidence,
-    edge,
+    edge: scaledEdge,
     reasoning,
   };
 }
@@ -243,19 +363,34 @@ function generateEventId(tweetText: string): string {
 }
 
 /**
- * Generate a trading signal from matched markets and tweet text
+ * Generate a trading signal from matched markets and tweet text.
+ *
+ * @param tweetText - Raw tweet text used for sentiment analysis and event ID.
+ * @param matches - Pre-computed market matches.
+ * @param arbitrageOpportunity - Optional arbitrage opportunity for the top match.
+ * @param precomputedSentiment - Optional sentiment already computed upstream.
+ *   Pass this when the caller has already called analyzeSentiment to avoid
+ *   running the analysis twice.
+ * @param eventId - Optional explicit event ID (e.g. the tweet's own ID).
+ *   Falls back to a hash of tweetText when not provided.
+ * @param smartMoneyFlow - Optional wallet-flow data for the top market.
+ *   When provided, the smart-money direction is used by the decision gate and
+ *   the confidence adjuster to validate and strengthen the signal.
  */
 export function generateSignal(
   tweetText: string,
   matches: MarketMatch[],
-  arbitrageOpportunity?: ArbitrageOpportunity
+  arbitrageOpportunity?: ArbitrageOpportunity,
+  precomputedSentiment?: SentimentResult,
+  eventId?: string,
+  smartMoneyFlow?: MarketWalletFlow
 ): TradingSignal {
   const startTime = Date.now();
 
   // If no matches, return minimal signal
   if (matches.length === 0) {
     return {
-      event_id: generateEventId(tweetText),
+      event_id: eventId ?? generateEventId(tweetText),
       signal_type: 'user_interest',
       urgency: 'low',
       matches: [],
@@ -266,8 +401,8 @@ export function generateSignal(
     };
   }
 
-  // Analyze tweet sentiment
-  const sentiment = analyzeSentiment(tweetText);
+  // Use pre-computed sentiment if provided to avoid redundant analysis
+  const sentiment = precomputedSentiment ?? analyzeSentiment(tweetText);
 
   // Use the top match (highest confidence) for signal computation
   const topMatch = matches[0];
@@ -287,11 +422,11 @@ export function generateSignal(
   // Determine signal type
   const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
 
-  // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
+  // Generate suggested action (passes arbitrage, top-match confidence, and smart-money flow)
+  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency, arbitrageOpportunity, topMatch.confidence, smartMoneyFlow);
 
   return {
-    event_id: generateEventId(tweetText),
+    event_id: eventId ?? generateEventId(tweetText),
     signal_type,
     urgency,
     matches,
