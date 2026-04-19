@@ -17,6 +17,48 @@ const STOP_WORDS = new Set([
   'there','what','when','who','which','where','how','does',
 ]);
 
+// Common prediction market rephrasing patterns.
+// Each key and its synonyms are treated as equivalent during word overlap
+// comparison so "trump out president" matches "trump resign president".
+// Keys must be single tokens (no spaces) — multi-word phrases like
+// "peace deal" are handled by normalizing to the first token ("ceasefire").
+const EQUIVALENCES: Record<string, string[]> = {
+  // Leaving office
+  resign:    ['out', 'removed', 'leave', 'step', 'cease', 'exit', 'fired', 'ousted'],
+  out:       ['resign', 'removed', 'leave', 'step', 'cease', 'exit', 'fired', 'ousted'],
+  removed:   ['resign', 'out', 'leave', 'fired', 'ousted'],
+  // Price direction
+  exceed:    ['above', 'over', 'surpass', 'hit', 'reach', 'pass'],
+  above:     ['exceed', 'over', 'surpass', 'hit', 'reach'],
+  below:     ['under', 'fall', 'drop', 'miss', 'fail'],
+  // Agreements / peace
+  ceasefire: ['truce', 'armistice', 'peace'],
+  truce:     ['ceasefire', 'armistice', 'peace'],
+  // Elections / confirmation
+  win:       ['elected', 'chosen', 'confirmed', 'nominated', 'appointed', 'selected'],
+  elected:   ['win', 'chosen', 'confirmed', 'nominated', 'appointed'],
+  confirmed: ['win', 'elected', 'chosen', 'appointed', 'nominated'],
+  // Conflict
+  war:       ['conflict', 'invasion', 'attack', 'strike'],
+  attack:    ['war', 'conflict', 'strike', 'invasion'],
+};
+
+/**
+ * Expand a set of meaningful words to include synonyms from EQUIVALENCES.
+ * "out" → adds "resign", "removed", "leave" etc. to the set so that
+ * "trump out president" overlaps with "trump resign president".
+ */
+function expandWithEquivalences(words: Set<string>): Set<string> {
+  const expanded = new Set(words);
+  for (const word of words) {
+    const synonyms = EQUIVALENCES[word];
+    if (synonyms) {
+      for (const syn of synonyms) expanded.add(syn);
+    }
+  }
+  return expanded;
+}
+
 /**
  * Extract meaningful content words from a title — everything that
  * actually describes what the bet is about, with stop words removed.
@@ -105,16 +147,25 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     }
   }
 
-  // Gate 4: at least 3 shared meaningful content words
-  const polyWords   = meaningfulWords(poly.title);
-  const kalshiWords = meaningfulWords(kalshi.title);
-  const sharedWords = [...polyWords].filter(w => kalshiWords.has(w));
+  // Gate 4 & 5: expand each title's words with equivalences before comparing,
+  // so "trump out president" overlaps with "trump resign president".
+  // Shared count uses raw words; Jaccard uses expanded sets so synonym
+  // bridges don't artificially inflate the intersection beyond what's real.
+  const polyWords      = meaningfulWords(poly.title);
+  const kalshiWords    = meaningfulWords(kalshi.title);
+  const polyExpanded   = expandWithEquivalences(polyWords);
+  const kalshiExpanded = expandWithEquivalences(kalshiWords);
+
+  // Shared: words that appear (directly or via synonym) in both expanded sets
+  const sharedWords = [...polyExpanded].filter(w => kalshiExpanded.has(w));
+
+  // Gate 4: need at least 3 shared content words (counting synonyms)
   if (sharedWords.length < 3) {
     return { isSimilar: false, confidence: 0, reason: `Only ${sharedWords.length} shared words (need 3)` };
   }
 
-  // Gate 5: Jaccard similarity ≥ 0.6 on meaningful words
-  const union   = new Set([...polyWords, ...kalshiWords]).size;
+  // Gate 5: Jaccard on expanded sets ≥ 0.6
+  const union   = new Set([...polyExpanded, ...kalshiExpanded]).size;
   const jaccard = sharedWords.length / union;
   if (jaccard < 0.6) {
     return { isSimilar: false, confidence: 0, reason: `Title similarity ${(jaccard * 100).toFixed(0)}% (need 60%)` };
