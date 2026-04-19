@@ -98,14 +98,11 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     return { isSimilar: false, confidence: 0, reason: 'Different categories' };
   }
 
-  // Reject matches where one side is illiquid relative to the other.
-  // A 50x volume gap means the thin market cannot absorb a real trade at
-  // the quoted price, making the spread untradeable even if prices differ.
-  const volumeRatio = Math.max(poly.volume24h, kalshi.volume24h) /
-                      Math.max(1, Math.min(poly.volume24h, kalshi.volume24h));
-  if (volumeRatio > 50) {
-    return { isSimilar: false, confidence: 0, reason: 'Volume mismatch' };
-  }
+  // Volume ratio check intentionally skipped for cross-platform comparisons.
+  // Polymarket reports volume in USD (millions), Kalshi in contracts (single digits).
+  // The two scales are structurally incomparable — a 300,000× ratio is normal,
+  // not a sign of illiquidity. Liquidity on Kalshi is assessed via the bid/ask
+  // spread embedded in yesPrice, not volume24h.
 
   // Calculate title similarity
   const titleSim = calculateTitleSimilarity(poly.title, kalshi.title);

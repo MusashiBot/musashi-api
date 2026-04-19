@@ -7,6 +7,11 @@ import { generateKeywords } from './keyword-generator';
 
 const KALSHI_API = 'https://api.elections.kalshi.com/trade-api/v2';
 const FETCH_TIMEOUT_MS = 10000; // 10s timeout to prevent hanging on cold starts
+const INTER_PAGE_DELAY_MS = 500; // throttle: wait 500ms between page requests
+const RATE_LIMIT_RETRY_DELAY_MS = 5000; // on 429: wait 5s and retry once
+const KALSHI_CACHE_TTL_MS = 60_000; // cache Kalshi results for 60 seconds
+
+let kalshiCache: { markets: Market[]; fetchedAt: number } | null = null;
 
 // Shape of a market object returned by the Kalshi REST API
 interface KalshiMarket {
@@ -16,14 +21,14 @@ interface KalshiMarket {
   title: string;
   market_type?: string;
   mve_collection_ticker?: string; // present only on multi-variable event (parlay) markets
-  yes_ask: number;          // cents (0–100)
-  yes_ask_dollars?: number; // same in dollars (0–1), prefer this if present
+  yes_ask: number;                    // cents (0–100)
+  yes_ask_dollars?: number | string;  // same in dollars (0–1), may be returned as string
   yes_bid: number;
-  yes_bid_dollars?: number;
+  yes_bid_dollars?: number | string;
   no_ask: number;
   no_bid: number;
-  last_price?: number;      // last trade price for YES in cents
-  last_price_dollars?: number;
+  last_price?: number;                // last trade price for YES in cents
+  last_price_dollars?: number | string;
   volume?: number;
   volume_24h?: number;
   open_interest?: number;
@@ -58,34 +63,28 @@ function isSimpleMarket(km: KalshiMarket): boolean {
   return true;
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
- * Fetch open markets from Kalshi's public API using cursor pagination.
- *
- * The default API ordering puts thousands of MVE (parlay/sports) markets first.
- * isSimpleMarket() filters those out, so we must page through until we have
- * enough simple binary markets for meaningful tweet matching.
- *
- * Stops when we reach `targetSimpleCount` simple markets or exhaust `maxPages`.
+ * Fetch a single page from Kalshi with one 429-retry before giving up.
  */
-export async function fetchKalshiMarkets(
-  targetSimpleCount = 400,
-  maxPages = 15,
-): Promise<Market[]> {
-  const PAGE_SIZE = 200;
-  const allSimple: Market[] = [];
-  let cursor: string | undefined;
-
-  for (let page = 0; page < maxPages; page++) {
-    const url = cursor
-      ? `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`
-      : `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=${PAGE_SIZE}`;
-
+async function fetchKalshiPage(url: string): Promise<KalshiMarketsResponse> {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
       const resp = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
+
+      if (resp.status === 429) {
+        if (attempt === 0) {
+          console.warn(`[Kalshi] Rate limited (429) — waiting ${RATE_LIMIT_RETRY_DELAY_MS}ms before retry`);
+          await sleep(RATE_LIMIT_RETRY_DELAY_MS);
+          continue;
+        }
+        throw new Error('Kalshi API rate limit exceeded after retry');
+      }
 
       if (!resp.ok) {
         console.error(`[Musashi SW] Kalshi HTTP ${resp.status} — declarativeNetRequest header stripping may not be active yet`);
@@ -97,21 +96,7 @@ export async function fetchKalshiMarkets(
         throw new Error('Unexpected Kalshi API response shape');
       }
 
-      const pageSimple = data.markets
-        .filter(isSimpleMarket)
-        .map(toMarket)
-        .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
-
-      allSimple.push(...pageSimple);
-
-      console.log(
-        `[Musashi] Page ${page + 1}: ${data.markets.length} raw → ` +
-        `${pageSimple.length} simple (total simple: ${allSimple.length})`
-      );
-
-      // Stop early once we have enough, or when the API has no more pages
-      if (allSimple.length >= targetSimpleCount || !data.cursor) break;
-      cursor = data.cursor;
+      return data;
     } catch (error) {
       clearTimeout(timeoutId);
       if ((error as Error).name === 'AbortError') {
@@ -121,20 +106,123 @@ export async function fetchKalshiMarkets(
     }
   }
 
-  console.log(`[Musashi] Fetched ${allSimple.length} live markets from Kalshi`);
-  return allSimple;
+  throw new Error('Kalshi fetch failed after all attempts');
+}
+
+// Series tickers that overlap with Polymarket categories.
+// Fetching by series_ticker skips the thousands of sports/baseball markets
+// that dominate blind pagination and returns only topic-relevant markets.
+const OVERLAP_SERIES = [
+  // Crypto
+  'KXBTC',   // Bitcoin price
+  'KXETH',   // Ethereum price
+  'KXXRP',   // XRP price
+  // Economics / Fed
+  'KXFED',   // Federal funds rate
+  'KXCPI',   // CPI inflation
+  'KXGDP',   // GDP growth
+  // US Politics
+  'KXTRUMPRESIGN',  // Trump resignation
+  'KXTRUMPPARDONS', // Trump pardons
+  'KXNEXTSPEAKER',  // House Speaker
+  'KXPRESPERSON',   // Next president
+  'KXPRESPARTY',    // Presidential party
+  'KXNEXTPRESSEC',  // Next press secretary
+  'KXAMEND22',      // 22nd Amendment
+  // Geopolitics
+  'KXZELENSKYPUTIN', // Russia-Ukraine
+  'KXTAIWANLVL4',   // Taiwan conflict
+  'KXNEXTISRAELPM', // Israel PM
+  'KXWITHDRAW',     // US troop withdrawal
+  'KXUSTAKEOVER',   // US foreign policy
+  // Tech / AI
+  'KXOAIANTH',      // OpenAI vs Anthropic IPO
+  'KXAGICO',        // AGI company
+  'KXDATACENTER',   // Data center
+  // Elections
+  'KXNEWPOPE',      // New Pope
+  'KXNEXTUKPM',     // UK PM
+  'KXUKPARTY',      // UK party
+];
+
+/**
+ * Fetch all open markets for a single series_ticker.
+ * Returns an empty array if the series has no active markets.
+ */
+async function fetchSeriesMarkets(seriesTicker: string): Promise<Market[]> {
+  const url = `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=100&series_ticker=${seriesTicker}`;
+
+  try {
+    const data = await fetchKalshiPage(url);
+    const markets = data.markets
+      .filter(isSimpleMarket)
+      .map(toMarket)
+      .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
+
+    if (markets.length > 0) {
+      console.log(`[Kalshi] ${seriesTicker}: ${markets.length} markets`);
+    }
+    return markets;
+  } catch (error) {
+    console.warn(`[Kalshi] ${seriesTicker} fetch failed: ${(error as Error).message}`);
+    return [];
+  }
+}
+
+/**
+ * Fetch Kalshi markets using targeted series_ticker fetches instead of
+ * blind pagination. Blind pagination puts thousands of sports games first —
+ * targeted fetches go directly to crypto, economics, and politics markets
+ * that actually overlap with Polymarket.
+ *
+ * Keeps 500ms delay between series fetches and a 60-second result cache.
+ */
+export async function fetchKalshiMarkets(
+  _targetSimpleCount = 400,
+  _maxPages = 15,
+): Promise<Market[]> {
+  // Return cached result if still fresh
+  if (kalshiCache && (Date.now() - kalshiCache.fetchedAt) < KALSHI_CACHE_TTL_MS) {
+    console.log(`[Kalshi] Returning cached ${kalshiCache.markets.length} markets (age: ${Date.now() - kalshiCache.fetchedAt}ms)`);
+    return kalshiCache.markets;
+  }
+
+  const seen = new Set<string>(); // deduplicate by ticker
+  const allMarkets: Market[] = [];
+
+  for (let i = 0; i < OVERLAP_SERIES.length; i++) {
+    if (i > 0) await sleep(INTER_PAGE_DELAY_MS);
+
+    const markets = await fetchSeriesMarkets(OVERLAP_SERIES[i]);
+    for (const m of markets) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        allMarkets.push(m);
+      }
+    }
+  }
+
+  console.log(`[Kalshi] Fetched ${allMarkets.length} targeted markets across ${OVERLAP_SERIES.length} series`);
+
+  kalshiCache = { markets: allMarkets, fetchedAt: Date.now() };
+  return allMarkets;
 }
 
 /** Map a raw Kalshi market object to our Market interface */
 function toMarket(km: KalshiMarket): Market {
+  // Kalshi API returns _dollars fields as strings in some responses — coerce to number
+  const yesBidDollars = km.yes_bid_dollars != null ? Number(km.yes_bid_dollars) : null;
+  const yesAskDollars = km.yes_ask_dollars != null ? Number(km.yes_ask_dollars) : null;
+  const lastPriceDollars = km.last_price_dollars != null ? Number(km.last_price_dollars) : null;
+
   // Prefer the _dollars variant (already 0–1); fall back to /100 conversion
   let yesPrice: number;
-  if (km.yes_bid_dollars != null && km.yes_ask_dollars != null && km.yes_ask_dollars > 0) {
-    yesPrice = (km.yes_bid_dollars + km.yes_ask_dollars) / 2;
+  if (yesBidDollars != null && yesAskDollars != null && yesAskDollars > 0) {
+    yesPrice = (yesBidDollars + yesAskDollars) / 2;
   } else if (km.yes_bid != null && km.yes_ask != null && km.yes_ask > 0) {
     yesPrice = ((km.yes_bid + km.yes_ask) / 2) / 100;
-  } else if (km.last_price_dollars != null && km.last_price_dollars > 0) {
-    yesPrice = km.last_price_dollars;
+  } else if (lastPriceDollars != null && lastPriceDollars > 0) {
+    yesPrice = lastPriceDollars;
   } else if (km.last_price != null && km.last_price > 0) {
     yesPrice = km.last_price / 100;
   } else {
