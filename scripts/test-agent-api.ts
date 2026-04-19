@@ -91,6 +91,9 @@ describe('analyze-text', () => {
 
 describe('markets', () => {
   test('arbitrage happy path', testOptions(), runAgentApiCase(testArbitrageHappyPath));
+  test('arbitrage fast mode payload shape', testOptions(), runAgentApiCase(testArbitrageFastModePayload));
+  test('arbitrage supports minNetEdgeBps', testOptions(), runAgentApiCase(testArbitrageMinNetEdgeBps));
+  test('arbitrage maxDataAgeMs degrades stale data', testOptions(), runAgentApiCase(testArbitrageMaxDataAgeDegrade));
   test('arbitrage rejects invalid minSpread', testOptions(), runAgentApiCase(testArbitrageInvalidMinSpread));
   test('arbitrage rejects invalid minConfidence', testOptions(), runAgentApiCase(testArbitrageInvalidMinConfidence));
   test('arbitrage rejects invalid limit', testOptions(), runAgentApiCase(testArbitrageInvalidLimit));
@@ -619,7 +622,7 @@ async function testAnalyzeTextFormUrlEncoded(): Promise<CaseResult> {
 }
 
 async function testArbitrageHappyPath(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?minSpread=0.03&minConfidence=0.5&limit=5');
+  const response = await request('/api/markets/arbitrage?mode=full&minSpread=0.03&minConfidence=0.5&limit=5');
 
   if (response.status === 503) {
     return warn(extractError(response));
@@ -633,26 +636,68 @@ async function testArbitrageHappyPath(): Promise<CaseResult> {
   return pass(`returned ${response.json.data.count} opportunities`);
 }
 
+async function testArbitrageFastModePayload(): Promise<CaseResult> {
+  const response = await request('/api/markets/arbitrage?mode=fast&minNetEdgeBps=50&limit=3');
+
+  if (response.status === 503) return warn(extractError(response));
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  expect(response.json.success === true, 'arbitrage fast mode success must be true');
+  validateArbitrageResponse(response);
+  expect(response.json.metadata?.mode === 'fast', 'fast mode metadata should echo fast');
+
+  for (const item of response.json.data.opportunities as any[]) {
+    expect(typeof item.netEdgeBps === 'number', 'fast mode opportunity must include netEdgeBps');
+    expect(typeof item.buyVenue === 'string', 'fast mode opportunity must include buyVenue');
+    expect(typeof item.sellVenue === 'string', 'fast mode opportunity must include sellVenue');
+  }
+
+  return pass(`returned ${response.json.data.count} fast opportunities`);
+}
+
+async function testArbitrageMinNetEdgeBps(): Promise<CaseResult> {
+  const response = await request('/api/markets/arbitrage?mode=full&minNetEdgeBps=120&limit=5');
+  if (response.status === 503) return warn(extractError(response));
+
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  validateArbitrageResponse(response);
+  for (const item of response.json.data.opportunities as any[]) {
+    if (typeof item.netEdgeBps === 'number') {
+      expect(item.netEdgeBps >= 120, 'minNetEdgeBps filter returned lower netEdgeBps item');
+    }
+  }
+  return pass(`returned ${response.json.data.count} opportunities with minNetEdgeBps=120`);
+}
+
+async function testArbitrageMaxDataAgeDegrade(): Promise<CaseResult> {
+  const response = await request('/api/markets/arbitrage?mode=full&maxDataAgeMs=0&limit=5');
+  if (response.status === 503) return warn(extractError(response));
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  expect(response.json.success === true, 'maxDataAgeMs response should still be success');
+  expect(response.json.metadata?.degraded === true, 'maxDataAgeMs stale path should set degraded=true');
+  expect(response.json.data?.count === 0, 'maxDataAgeMs stale path should return zero opportunities');
+  return pass('maxDataAgeMs stale-degrade path returned expected response');
+}
+
 async function testArbitrageInvalidMinSpread(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?minSpread=-1');
+  const response = await request('/api/markets/arbitrage?mode=full&minSpread=-1');
   expect(response.status === 400, `expected 400, got ${response.status}`);
   return pass(extractError(response));
 }
 
 async function testArbitrageInvalidMinConfidence(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?minConfidence=1.5');
+  const response = await request('/api/markets/arbitrage?mode=full&minConfidence=1.5');
   expect(response.status === 400, `expected 400, got ${response.status}`);
   return pass(extractError(response));
 }
 
 async function testArbitrageInvalidLimit(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?limit=0');
+  const response = await request('/api/markets/arbitrage?mode=full&limit=0');
   expect(response.status === 400, `expected 400, got ${response.status}`);
   return pass(extractError(response));
 }
 
 async function testArbitrageDuplicateQueryParams(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?limit=2&limit=3&minSpread=0.01');
+  const response = await request('/api/markets/arbitrage?mode=full&limit=2&limit=3&minSpread=0.01');
   assertNoSensitiveLeak(response, 'arbitrage duplicate-query response');
 
   if (response.status === 503) return warn(extractError(response));
@@ -662,7 +707,7 @@ async function testArbitrageDuplicateQueryParams(): Promise<CaseResult> {
 }
 
 async function testArbitrageCategoryFilter(): Promise<CaseResult> {
-  const response = await request('/api/markets/arbitrage?category=crypto&limit=3&minSpread=0.01');
+  const response = await request('/api/markets/arbitrage?mode=full&category=crypto&limit=3&minSpread=0.01');
 
   if (response.status === 503) return warn(extractError(response));
   expect(response.status === 200, `expected 200, got ${response.status}`);
@@ -1801,12 +1846,23 @@ function validateArbitrageResponse(response: HttpResult): void {
   expectIsoTimestamp(response.json.data.timestamp, 'arbitrage timestamp must be valid ISO');
 
   for (const item of response.json.data.opportunities as any[]) {
-    validateMarket(item.polymarket);
-    validateMarket(item.kalshi);
-    expect(typeof item.spread === 'number', 'arbitrage spread must be number');
-    expect(typeof item.profitPotential === 'number', 'arbitrage profitPotential must be number');
-    expect(['buy_poly_sell_kalshi', 'buy_kalshi_sell_poly'].includes(item.direction), 'arbitrage direction invalid');
-    expect(typeof item.confidence === 'number', 'arbitrage confidence must be number');
+    // full mode
+    if (item.polymarket && item.kalshi) {
+      validateMarket(item.polymarket);
+      validateMarket(item.kalshi);
+      expect(typeof item.spread === 'number', 'arbitrage spread must be number');
+      expect(typeof item.profitPotential === 'number', 'arbitrage profitPotential must be number');
+      expect(['buy_poly_sell_kalshi', 'buy_kalshi_sell_poly'].includes(item.direction), 'arbitrage direction invalid');
+      expect(typeof item.confidence === 'number', 'arbitrage confidence must be number');
+      continue;
+    }
+
+    // fast mode
+    expect(typeof item.buyVenue === 'string', 'fast arbitrage buyVenue must be string');
+    expect(typeof item.sellVenue === 'string', 'fast arbitrage sellVenue must be string');
+    expect(typeof item.buyPrice === 'number', 'fast arbitrage buyPrice must be number');
+    expect(typeof item.sellPrice === 'number', 'fast arbitrage sellPrice must be number');
+    expect(typeof item.netEdgeBps === 'number', 'fast arbitrage netEdgeBps must be number');
   }
 }
 

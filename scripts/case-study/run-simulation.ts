@@ -67,15 +67,40 @@ function legacyDetect(markets: Market[]): ArbitrageOpportunity[] {
       const spread = Math.abs(poly.yesPrice - kalshi.yesPrice);
       if (spread < 0.03) continue;
 
+      const direction = poly.yesPrice < kalshi.yesPrice ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly';
+      const buyPrice = direction === 'buy_poly_sell_kalshi' ? poly.yesPrice : kalshi.yesPrice;
+      const sellPrice = direction === 'buy_poly_sell_kalshi' ? kalshi.yesPrice : poly.yesPrice;
+      const now = new Date().toISOString();
+
       opportunities.push({
         polymarket: poly,
         kalshi,
         spread,
         rawPriceGap: spread,
         profitPotential: spread,
-        direction: poly.yesPrice < kalshi.yesPrice ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly',
+        direction,
+        buyPrice,
+        sellPrice,
+        buyVenue: direction === 'buy_poly_sell_kalshi' ? 'polymarket' : 'kalshi',
+        sellVenue: direction === 'buy_poly_sell_kalshi' ? 'kalshi' : 'polymarket',
+        netEdgeBps: 0,
+        grossEdgeBps: 0,
+        estimatedFeesBps: 0,
+        slippageBps: 0,
+        latencyRiskBps: 0,
         confidence,
         matchReason: `Legacy title similarity (${(confidence * 100).toFixed(0)}%)`,
+        matchConfidence: {
+          score: confidence,
+          titleSimilarity: confidence,
+          keywordOverlap: 0,
+          categoryAligned: true,
+          expiryAligned: true,
+        },
+        sourceTimestamps: { polymarket: poly.lastUpdated ?? null, kalshi: kalshi.lastUpdated ?? null },
+        expiryDeltaMinutes: null,
+        asOfTs: now,
+        liquidityScore: 1,
       });
     }
   }
@@ -103,7 +128,8 @@ function coveredRealizedPnl(op: ArbitrageOpportunity): number {
 }
 
 function fixedPnl(op: ArbitrageOpportunity): number {
-  const cost = op.costPerBundle ?? 1;
+  const cost = op.costPerBundle ?? op.buyPrice;
+  if (!cost || cost <= 0) return 0;
   return op.profitPotential * (POSITION_USD / cost);
 }
 
@@ -122,7 +148,7 @@ async function liveSnapshot(): Promise<void> {
       fetchPolymarkets(200, 3),
       fetchKalshiMarkets(400, 3),
     ]);
-    const arbs = detectArbitrage([...poly, ...kalshi], 0.03);
+    const arbs = detectArbitrage([...poly, ...kalshi], Math.round(0.03 * 10000));
     console.log('\nLIVE DATA SNAPSHOT');
     console.log(`  polymarket markets: ${poly.length}`);
     console.log(`  kalshi markets: ${kalshi.length}`);
@@ -182,7 +208,7 @@ async function main(): Promise<void> {
   ];
 
   const before = legacyDetect(fixtures);
-  const after = detectArbitrage(fixtures, 0.03, COST_BUFFER);
+  const after = detectArbitrage(fixtures, Math.round(0.03 * 10000));
 
   console.log('MUSASHI CASE STUDY SIMULATION');
   console.log(`position size: $${POSITION_USD}`);

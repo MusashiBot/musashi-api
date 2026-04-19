@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { fetchPolymarkets } from '../src/api/polymarket-client';
 import { fetchKalshiMarkets } from '../src/api/kalshi-client';
+import { getArbitrageCacheMetadata, getMarketMetadata } from './lib/market-cache';
 
 export default async function handler(
   req: VercelRequest,
@@ -52,6 +53,9 @@ export default async function handler(
         ? 'down'
         : 'degraded';
 
+    const freshness = getMarketMetadata();
+    const arbCache = getArbitrageCacheMetadata();
+
     const healthData = {
       status: overallStatus,
       timestamp: new Date().toISOString(),
@@ -88,6 +92,20 @@ export default async function handler(
         max_markets_per_request: 5,
         cache_ttl_seconds: 300,
         rate_limit: 'none (currently)',
+      },
+      caches: {
+        arbitrage: arbCache,
+      },
+      feature_flags: {
+        ARB_V15_ENABLED: process.env.ARB_V15_ENABLED !== '0',
+        ARB_NET_EDGE_ENABLED: process.env.ARB_NET_EDGE_ENABLED !== '0',
+        ARB_STRICT_MATCH_ENABLED: process.env.ARB_STRICT_MATCH_ENABLED !== '0',
+        ARB_SHARED_CACHE_ENABLED: process.env.ARB_SHARED_CACHE_ENABLED === '1',
+      },
+      freshness: {
+        data_age_seconds: freshness.data_age_seconds,
+        fetched_at: freshness.fetched_at,
+        sources: freshness.sources,
       },
     };
 

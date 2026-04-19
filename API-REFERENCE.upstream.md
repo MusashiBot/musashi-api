@@ -106,79 +106,115 @@ Get cross-platform arbitrage opportunities between Polymarket and Kalshi.
 
 **Request:**
 ```
-GET /api/markets/arbitrage?minSpread=0.03&minConfidence=0.5&limit=20&category=crypto
+GET /api/markets/arbitrage?mode=fast&minNetEdgeBps=50&maxDataAgeMs=5000&minConfidence=0.5&limit=20&category=crypto
 ```
 
 **Query Parameters:**
-- `minSpread` (optional): Minimum price spread (default: 0.03 = 3%)
+- `mode` (optional): `fast | full` (default: `fast`)
+- `minNetEdgeBps` (optional): Minimum net executable edge in bps (default derived from `minSpread`)
+- `maxDataAgeMs` (optional): Freshness budget; stale data returns degraded empty payload
+- `minSpread` (optional): Legacy fallback threshold (mapped to bps for backward compatibility)
 - `minConfidence` (optional): Minimum match confidence (default: 0.5 = 50%)
 - `limit` (optional): Max results (default: 20, max: 100)
 - `category` (optional): Filter by category (crypto, us_politics, economics, etc.)
 
-**Response:**
+**Response (`mode=full`):**
 ```json
 {
   "success": true,
   "data": {
     "opportunities": [
       {
-        "polymarket": {
-          "id": "polymarket-0x123...",
-          "title": "Will Bitcoin reach $100k by March 2026?",
-          "yesPrice": 0.63,
-          "volume24h": 450000,
-          ...
+        "polymarket": { "...": "full market object" },
+        "kalshi": { "...": "full market object" },
+        "buyVenue": "polymarket",
+        "sellVenue": "kalshi",
+        "buyPrice": 0.62,
+        "sellPrice": 0.69,
+        "grossEdgeBps": 1129,
+        "estimatedFeesBps": 40,
+        "slippageBps": 10,
+        "latencyRiskBps": 5,
+        "netEdgeBps": 1074,
+        "matchConfidence": {
+          "score": 0.84,
+          "titleSimilarity": 0.78,
+          "keywordOverlap": 4,
+          "categoryAligned": true,
+          "expiryAligned": true
         },
-        "kalshi": {
-          "id": "kalshi-KXBTC-...",
-          "title": "Bitcoin $100k by Mar 2026",
-          "yesPrice": 0.70,
-          "volume24h": 200000,
-          ...
+        "expiryDeltaMinutes": 45,
+        "liquidityScore": 0.92,
+        "sourceTimestamps": {
+          "polymarket": "2026-03-01T11:59:42.000Z",
+          "kalshi": "2026-03-01T11:59:41.000Z"
         },
-        "spread": 0.07,                // 7% spread
-        "profitPotential": 0.07,       // Expected 7% profit
+        "asOfTs": "2026-03-01T12:00:00.000Z",
+        // Backward-compatible fields during migration window:
+        "spread": 0.07,
+        "profitPotential": 0.07,
         "direction": "buy_poly_sell_kalshi",
-        "confidence": 0.85,
-        "matchReason": "High title similarity (85%)"
+        "confidence": 0.84,
+        "matchReason": "High title similarity (78%)"
       }
     ],
     "count": 5,
     "timestamp": "2026-03-01T12:00:00.000Z",
     "filters": {
+      "mode": "full",
       "minSpread": 0.03,
+      "minNetEdgeBps": 300,
+      "maxDataAgeMs": 5000,
       "minConfidence": 0.5,
       "limit": 20,
       "category": "crypto"
-    },
-    "metadata": {
-      "processing_time_ms": 89,
-      "markets_analyzed": 1234,
-      "polymarket_count": 734,
-      "kalshi_count": 500,
-      // Stage 0: Freshness tracking (added March 2026)
-      "data_age_seconds": 18,
-      "fetched_at": "2026-03-01T11:59:42.000Z",
-      "sources": {
-        "polymarket": {
-          "available": true,
-          "last_successful_fetch": "2026-03-01T11:59:42.000Z",
-          "market_count": 1200
-        },
-        "kalshi": {
-          "available": true,
-          "last_successful_fetch": "2026-03-01T11:59:42.000Z",
-          "market_count": 500
-        }
-      }
+    }
+  },
+  "metadata": {
+    "processing_time_ms": 89,
+    "data_age_seconds": 18,
+    "fetched_at": "2026-03-01T11:59:42.000Z",
+    "mode": "full",
+    "sources": {
+      "polymarket": { "available": true, "market_count": 1200 },
+      "kalshi": { "available": true, "market_count": 500 }
     }
   }
 }
 ```
 
-**Trading Strategy:**
-- `buy_poly_sell_kalshi`: Buy YES on Polymarket (cheaper), sell YES on Kalshi (expensive)
-- `buy_kalshi_sell_poly`: Buy YES on Kalshi (cheaper), sell YES on Polymarket (expensive)
+**Response (`mode=fast`):**
+```json
+{
+  "success": true,
+  "data": {
+    "opportunities": [
+      {
+        "buyVenue": "polymarket",
+        "sellVenue": "kalshi",
+        "buyPrice": 0.62,
+        "sellPrice": 0.69,
+        "netEdgeBps": 1074,
+        "estimatedFeesBps": 40,
+        "slippageBps": 10,
+        "latencyRiskBps": 5,
+        "matchConfidence": 0.84,
+        "expiryDeltaMinutes": 45,
+        "liquidityScore": 0.92,
+        "sourceTimestamps": {
+          "polymarket": "2026-03-01T11:59:42.000Z",
+          "kalshi": "2026-03-01T11:59:41.000Z"
+        },
+        "asOfTs": "2026-03-01T12:00:00.000Z"
+      }
+    ],
+    "count": 1
+  },
+  "metadata": {
+    "mode": "fast"
+  }
+}
+```
 
 ---
 

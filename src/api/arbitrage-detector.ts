@@ -1,365 +1,329 @@
-// Cross-platform arbitrage detector
-// Matches equivalent Polymarket/Kalshi contracts and prices covered YES/NO bundles.
+﻿// Cross-platform arbitrage detector
+// Matches markets across Polymarket and Kalshi to find price discrepancies
 
 import { Market, ArbitrageOpportunity } from '../types/market';
 
-const STOP_WORDS = new Set([
-  'will', 'the', 'a', 'an', 'in', 'on', 'at', 'by', 'for', 'to', 'of',
-  'and', 'or', 'is', 'be', 'has', 'have', 'are', 'was', 'were', 'been',
-  'do', 'does', 'did', 'before', 'after', 'end', 'yes', 'no', 'than',
-  'major', 'us', 'use', 'its', 'their', 'any', 'all', 'into', 'out',
-  'as', 'from', 'with', 'this', 'that', 'not', 'new', 'more', 'most',
-  'least', 'how', 'what', 'when', 'where', 'who', 'get', 'got', 'put',
-  'set', 'per', 'via', 'if', 'whether', 'each', 'such', 'also',
-]);
+declare const process: {
+  env: Record<string, string | undefined>;
+};
 
-const OUTCOME_PHRASES = [
-  'win', 'wins', 'won', 'nominee', 'nomination', 'elected', 'election',
-  'above', 'below', 'over', 'under', 'reach', 'reaches', 'hit', 'hits',
-  'pass', 'passes', 'rate hike', 'rate cut', 'cut rates', 'raise rates',
-  'shutdown', 'resign', 'indicted', 'approved', 'land', 'launch',
-];
+const FEE_POLY_BPS = Number(process.env.ARB_POLY_FEE_BPS || process.env.ARB_FEE_BPS || 20);
+const FEE_KALSHI_BPS = Number(process.env.ARB_KALSHI_FEE_BPS || process.env.ARB_FEE_BPS || 20);
+const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
+const LATENCY_BPS = Number(process.env.ARB_LATENCY_BPS || 5);
+const MIN_VOLUME_FLOOR = Number(process.env.ARB_MIN_VOL || 500);
+const ARB_V15_ENABLED = process.env.ARB_V15_ENABLED !== '0';
+const ARB_NET_EDGE_ENABLED = process.env.ARB_NET_EDGE_ENABLED !== '0';
+const ARB_STRICT_MATCH_ENABLED = process.env.ARB_STRICT_MATCH_ENABLED !== '0';
 
-interface ContractSignature {
-  terms: Set<string>;
-  years: Set<string>;
-  dates: Set<string>;
-  numbers: Set<string>;
-  outcomes: Set<string>;
-  scopes: Set<string>;
+/**
+ * Helper to group markets by category for faster scanning (O(N) vs O(N*M))
+ */
+function groupByCategory(markets: Market[]): Record<string, Market[]> {
+  return markets.reduce((acc, market) => {
+    const cat = market.category || 'other';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(market);
+    return acc;
+  }, {} as Record<string, Market[]>);
 }
 
-interface MatchResult {
-  isSimilar: boolean;
-  confidence: number;
-  reason: string;
-}
-
-interface BundleCandidate {
-  direction: ArbitrageOpportunity['direction'];
-  yesPlatform: 'polymarket' | 'kalshi';
-  noPlatform: 'polymarket' | 'kalshi';
-  yesPrice: number;
-  noPrice: number;
-  costPerBundle: number;
-  edge: number;
-}
-
-const DEFAULT_FEES_AND_SLIPPAGE = Number.parseFloat(
-  process.env.MUSASHI_ARB_COST_BUFFER ?? '0.02',
-);
-
+/**
+ * Normalize a title for fuzzy matching
+ * Removes punctuation, dates, common question words, normalizes spacing
+ */
 function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
-    .replace(/[$,]/g, '')
-    .replace(/[^a-z0-9.%\s-]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/\?/g, '') // Remove question marks
+    .replace(/\b(will|before|after|by|in|on|at|the|a|an)\b/g, '') // Remove filler words
+    .replace(/\b(2024|2025|2026|2027|2028)\b/g, '') // Remove years
+    .replace(/[^a-z0-9\s]/g, ' ') // Remove all punctuation
+    .replace(/\s+/g, ' ') // Normalize whitespace
     .trim();
 }
 
-function tokens(title: string): string[] {
-  return normalizeTitle(title)
-    .split(' ')
-    .filter(word => word.length > 1 && !STOP_WORDS.has(word));
-}
-
-function extractTerms(title: string): Set<string> {
-  return new Set(tokens(title).filter(word => word.length >= 3));
-}
-
-function extractYears(title: string, endDate?: string): Set<string> {
-  const years = new Set<string>();
-  for (const match of normalizeTitle(title).matchAll(/\b20\d{2}\b/g)) {
-    years.add(match[0]);
-  }
-  if (endDate) {
-    const year = new Date(endDate).getUTCFullYear();
-    if (Number.isFinite(year)) years.add(String(year));
-  }
-  return years;
-}
-
-function extractDates(title: string): Set<string> {
-  const normalized = normalizeTitle(title);
-  const dates = new Set<string>();
-  const monthPattern = /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}\b/g;
-  for (const match of normalized.matchAll(monthPattern)) dates.add(match[0]);
-  for (const match of normalized.matchAll(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g)) dates.add(match[0]);
-  return dates;
-}
-
-function extractNumbers(title: string): Set<string> {
-  const numbers = new Set<string>();
-  for (const match of normalizeTitle(title).matchAll(/\b\d+(?:\.\d+)?\s?(?:k|m|b|%|percent|bps)?\b/g)) {
-    numbers.add(match[0].replace(/\s+/g, ''));
-  }
-  return numbers;
-}
-
-function extractOutcomes(title: string): Set<string> {
-  const normalized = normalizeTitle(title);
-  const outcomes = new Set<string>();
-  for (const phrase of OUTCOME_PHRASES) {
-    if (normalized.includes(phrase)) outcomes.add(phrase);
-  }
-  return outcomes;
-}
-
-function extractScopes(title: string): Set<string> {
-  const normalized = normalizeTitle(title);
-  const scopes = new Set<string>();
-
-  if (/\bmatch\b|\bvs\b|\bversus\b/.test(normalized)) scopes.add('single_match');
-  if (/\bseason\b|\bplayoffs?\b|\bchampionship\b|\btournament\b|\bseries\b|\bwinner\b/.test(normalized)) scopes.add('season_or_tournament');
-  if (/\belection\b|\bnominee\b|\bnomination\b/.test(normalized)) scopes.add('election');
-  if (/\bby\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)|before|after/.test(normalized)) scopes.add('deadline');
-
-  return scopes;
-}
-
-function signature(market: Market): ContractSignature {
-  return {
-    terms: extractTerms(market.title),
-    years: extractYears(market.title, market.endDate),
-    dates: extractDates(market.title),
-    numbers: extractNumbers(market.title),
-    outcomes: extractOutcomes(market.title),
-    scopes: extractScopes(market.title),
-  };
-}
-
-function intersectionSize(a: Set<string>, b: Set<string>): number {
-  let shared = 0;
-  for (const value of a) {
-    if (b.has(value)) shared++;
-  }
-  return shared;
-}
-
-function hasConflict(a: Set<string>, b: Set<string>): boolean {
-  return a.size > 0 && b.size > 0 && intersectionSize(a, b) === 0;
-}
-
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  const shared = intersectionSize(a, b);
-  const union = a.size + b.size - shared;
-  return union > 0 ? shared / union : 0;
-}
-
-function calculateKeywordOverlap(market1: Market, market2: Market): number {
-  return intersectionSize(new Set(market1.keywords), new Set(market2.keywords));
-}
-
-function areMarketsSimilar(poly: Market, kalshi: Market): MatchResult {
-  const strictCategoryMatch =
-    poly.category === kalshi.category &&
-    poly.category !== 'other' &&
-    kalshi.category !== 'other';
-  const categoryUnknown = poly.category === 'other' || kalshi.category === 'other';
-
-  if (!strictCategoryMatch && !categoryUnknown) {
-    return { isSimilar: false, confidence: 0, reason: 'Different categories' };
-  }
-
-  const polySig = signature(poly);
-  const kalshiSig = signature(kalshi);
-
-  if (hasConflict(polySig.years, kalshiSig.years)) {
-    return { isSimilar: false, confidence: 0, reason: 'Different contract years' };
-  }
-
-  if (hasConflict(polySig.dates, kalshiSig.dates)) {
-    return { isSimilar: false, confidence: 0, reason: 'Different contract dates' };
-  }
-
-  if (hasConflict(polySig.numbers, kalshiSig.numbers)) {
-    return { isSimilar: false, confidence: 0, reason: 'Different numeric thresholds' };
-  }
-
-  if (hasConflict(polySig.outcomes, kalshiSig.outcomes)) {
-    return { isSimilar: false, confidence: 0, reason: 'Different outcome wording' };
-  }
-
-  if (hasConflict(polySig.scopes, kalshiSig.scopes)) {
-    return { isSimilar: false, confidence: 0, reason: 'Different contract scope' };
-  }
-
-  const titleSim = jaccard(polySig.terms, kalshiSig.terms);
-  const keywordOverlap = calculateKeywordOverlap(poly, kalshi);
-  const sharedTerms = intersectionSize(polySig.terms, kalshiSig.terms);
-
-  let confidence = Math.max(titleSim, Math.min(keywordOverlap / 8, 0.85));
-  const blockersMatched =
-    (polySig.years.size === 0 || kalshiSig.years.size === 0 || intersectionSize(polySig.years, kalshiSig.years) > 0) &&
-    (polySig.numbers.size === 0 || kalshiSig.numbers.size === 0 || intersectionSize(polySig.numbers, kalshiSig.numbers) > 0);
-
-  if (strictCategoryMatch && blockersMatched && titleSim >= 0.45) {
-    confidence = Math.max(confidence, 0.75);
-    return {
-      isSimilar: true,
-      confidence,
-      reason: `Strict category + contract fields + title similarity (${(titleSim * 100).toFixed(0)}%)`,
-    };
-  }
-
-  if (strictCategoryMatch && blockersMatched && keywordOverlap >= 4 && sharedTerms >= 2) {
-    confidence = Math.max(confidence, 0.65);
-    return {
-      isSimilar: true,
-      confidence,
-      reason: `${keywordOverlap} shared keywords with matching contract fields`,
-    };
-  }
-
-  if (categoryUnknown && blockersMatched && titleSim >= 0.85 && sharedTerms >= 4) {
-    confidence = Math.max(confidence, 0.7);
-    return {
-      isSimilar: true,
-      confidence,
-      reason: `Unknown category but strong title similarity (${(titleSim * 100).toFixed(0)}%)`,
-    };
-  }
-
-  return { isSimilar: false, confidence: 0, reason: 'Insufficient contract equivalence' };
-}
-
-function buyYesPrice(market: Market): number {
-  return market.yesAsk ?? market.yesPrice;
-}
-
-function buyNoPrice(market: Market): number {
-  return market.noAsk ?? market.noPrice;
-}
-
-function priceBundle(poly: Market, kalshi: Market, feesAndSlippage: number): BundleCandidate[] {
-  const polyYesKalshiNo = buyYesPrice(poly) + buyNoPrice(kalshi) + feesAndSlippage;
-  const kalshiYesPolyNo = buyYesPrice(kalshi) + buyNoPrice(poly) + feesAndSlippage;
-
-  return [
-    {
-      direction: 'buy_poly_sell_kalshi',
-      yesPlatform: 'polymarket',
-      noPlatform: 'kalshi',
-      yesPrice: buyYesPrice(poly),
-      noPrice: buyNoPrice(kalshi),
-      costPerBundle: polyYesKalshiNo,
-      edge: 1 - polyYesKalshiNo,
-    },
-    {
-      direction: 'buy_kalshi_sell_poly',
-      yesPlatform: 'kalshi',
-      noPlatform: 'polymarket',
-      yesPrice: buyYesPrice(kalshi),
-      noPrice: buyNoPrice(poly),
-      costPerBundle: kalshiYesPolyNo,
-      edge: 1 - kalshiYesPolyNo,
-    },
-  ];
-}
-
-function candidatesFor(poly: Market, kalshiByCategory: Map<string, Market[]>): Market[] {
-  if (poly.category === 'other') {
-    return kalshiByCategory.get('other') ?? [];
-  }
-
-  return [
-    ...(kalshiByCategory.get(poly.category) ?? []),
-    ...(kalshiByCategory.get('other') ?? []),
-  ];
-}
-
 /**
- * Detect covered arbitrage opportunities across Polymarket and Kalshi.
- *
- * Real cross-venue arbitrage buys complementary outcomes:
- *   YES on venue A + NO on venue B + fees/slippage < $1 payout.
- *
- * The legacy absolute YES-vs-YES spread is exposed as rawPriceGap only; the
- * spread field now represents net edge after modeled costs.
+ * Extract key entities from a market title
+ * Looks for: names, tickers, numbers, organizations
  */
-export function detectArbitrage(
-  markets: Market[],
-  minSpread: number = 0.03,
-  feesAndSlippage: number = DEFAULT_FEES_AND_SLIPPAGE,
-): ArbitrageOpportunity[] {
-  const opportunities: ArbitrageOpportunity[] = [];
-  const polymarkets = markets.filter(m => m.platform === 'polymarket');
-  const kalshiMarkets = markets.filter(m => m.platform === 'kalshi');
-  const kalshiByCategory = new Map<string, Market[]>();
+function extractEntities(title: string): Set<string> {
+  const normalized = normalizeTitle(title);
+  const words = normalized.split(' ');
+  const entities = new Set<string>();
 
-  for (const market of kalshiMarkets) {
-    const bucket = kalshiByCategory.get(market.category) ?? [];
-    bucket.push(market);
-    kalshiByCategory.set(market.category, bucket);
-  }
+  // Extract significant words (3+ chars, not in stop list)
+  const stopWords = new Set(['will', 'hit', 'reach', 'win', 'lose', 'pass', 'than', 'over', 'under']);
 
-  console.log(`[Arbitrage] Checking ${polymarkets.length} Polymarket markets against category-filtered Kalshi buckets`);
-
-  for (const poly of polymarkets) {
-    for (const kalshi of candidatesFor(poly, kalshiByCategory)) {
-      const similarity = areMarketsSimilar(poly, kalshi);
-      if (!similarity.isSimilar) continue;
-
-      const bestBundle = priceBundle(poly, kalshi, feesAndSlippage)
-        .sort((a, b) => b.edge - a.edge)[0];
-
-      if (bestBundle.edge < minSpread) continue;
-
-      opportunities.push({
-        polymarket: poly,
-        kalshi,
-        spread: +bestBundle.edge.toFixed(4),
-        rawPriceGap: +Math.abs(poly.yesPrice - kalshi.yesPrice).toFixed(4),
-        costPerBundle: +bestBundle.costPerBundle.toFixed(4),
-        feesAndSlippage,
-        profitPotential: +bestBundle.edge.toFixed(4),
-        direction: bestBundle.direction,
-        legs: {
-          yes: { platform: bestBundle.yesPlatform, price: bestBundle.yesPrice },
-          no: { platform: bestBundle.noPlatform, price: bestBundle.noPrice },
-        },
-        confidence: similarity.confidence,
-        matchReason: similarity.reason,
-      });
+  for (const word of words) {
+    if (word.length >= 3 && !stopWords.has(word)) {
+      entities.add(word);
     }
   }
 
-  opportunities.sort((a, b) => b.profitPotential - a.profitPotential);
-  console.log(`[Arbitrage] Found ${opportunities.length} covered opportunities (min edge: ${minSpread})`);
-
-  return opportunities;
+  return entities;
 }
 
 /**
- * Get top arbitrage opportunities.
+ * Calculate similarity score between two titles
+ * Returns 0-1 based on shared entities
+ */
+function calculateTitleSimilarity(title1: string, title2: string): number {
+  const entities1 = extractEntities(title1);
+  const entities2 = extractEntities(title2);
+
+  if (entities1.size === 0 || entities2.size === 0) return 0;
+
+  // Count shared entities
+  let sharedCount = 0;
+  for (const entity of entities1) {
+    if (entities2.has(entity)) {
+      sharedCount++;
+    }
+  }
+
+  // Jaccard similarity: intersection / union
+  const union = entities1.size + entities2.size - sharedCount;
+  return union > 0 ? sharedCount / union : 0;
+}
+
+/**
+ * Calculate keyword overlap between two markets
+ * Returns the number of shared keywords
+ */
+function calculateKeywordOverlap(market1: Market, market2: Market): number {
+  const keywords1 = new Set(market1.keywords);
+  const keywords2 = new Set(market2.keywords);
+
+  let overlap = 0;
+  for (const kw of keywords1) {
+    if (keywords2.has(kw)) {
+      overlap++;
+    }
+  }
+
+  return overlap;
+}
+
+/**
+ * Check if two markets refer to the same event
+ * Uses title similarity + keyword overlap + category matching
+ */
+function areMarketsSimilar(poly: Market, kalshi: Market): {
+  isSimilar: boolean;
+  confidence: number;
+  titleSim: number;
+  keywordOverlap: number;
+  reason: string;
+} {
+  // Must be in the same category (or one is 'other')
+  const categoryMatch = poly.category === kalshi.category ||
+                       poly.category === 'other' ||
+                       kalshi.category === 'other';
+
+  if (!categoryMatch) {
+    return {
+      isSimilar: false,
+      confidence: 0,
+      titleSim: 0,
+      keywordOverlap: 0,
+      reason: 'Different categories',
+    };
+  }
+
+  // Calculate title similarity
+  const titleSim = calculateTitleSimilarity(poly.title, kalshi.title);
+
+  // Calculate keyword overlap
+  const keywordOverlap = calculateKeywordOverlap(poly, kalshi);
+
+  // Matching criteria (needs at least one strong signal):
+  // 1. High title similarity OR
+  // 2. Strong keyword overlap (3+ shared keywords)
+  const titleThreshold = ARB_STRICT_MATCH_ENABLED ? 0.6 : 0.5;
+  const entityThreshold = ARB_STRICT_MATCH_ENABLED ? 0.35 : 0.3;
+
+  if (titleSim > titleThreshold) {
+    return {
+      isSimilar: true,
+      confidence: titleSim,
+      titleSim,
+      keywordOverlap,
+      reason: `High title similarity (${(titleSim * 100).toFixed(0)}%)`,
+    };
+  }
+
+  if (keywordOverlap >= 3) {
+    const confidence = Math.min(keywordOverlap / 10, 0.85); // Cap at 0.85
+    return {
+      isSimilar: true,
+      confidence,
+      titleSim,
+      keywordOverlap,
+      reason: `${keywordOverlap} shared keywords`,
+    };
+  }
+
+  // Check for exact entity matches (strong signal even with low overall similarity)
+  const polyEntities = extractEntities(poly.title);
+  const kalshiEntities = extractEntities(kalshi.title);
+  const sharedEntities = Array.from(polyEntities).filter(e => kalshiEntities.has(e));
+
+  if (sharedEntities.length >= 2 && titleSim > entityThreshold) {
+    return {
+      isSimilar: true,
+      confidence: 0.7,
+      titleSim,
+      keywordOverlap,
+      reason: `Shared entities: ${sharedEntities.slice(0, 3).join(', ')}`,
+    };
+  }
+
+  return {
+    isSimilar: false,
+    confidence: 0,
+    titleSim,
+    keywordOverlap,
+    reason: 'Insufficient similarity',
+  };
+}
+
+function safePriceForBuy(market: Market): number {
+  return market.yesAsk ?? market.yesPrice;
+}
+
+function safePriceForSell(market: Market): number {
+  return market.yesBid ?? market.yesPrice;
+}
+
+/**
+ * Detect arbitrage opportunities
+ *
+ * @param markets - Combined array of markets from both platforms
+ * @param minNetEdgeBps - Minimum basis points profit (default, 50bps/0.5%)
+ */
+export function detectArbitrage(
+  markets: Market[],
+  minNetEdgeBps: number = 10
+): ArbitrageOpportunity[] {
+  const opportunities: ArbitrageOpportunity[] = [];
+  const polyByCat = groupByCategory(markets.filter(m => m.platform === 'polymarket'));
+  const kalshiByCat = groupByCategory(markets.filter(m => m.platform === 'kalshi'));
+
+  for (const cat in polyByCat) {
+    if (!kalshiByCat[cat]) continue;
+    for (const poly of polyByCat[cat]) {
+      for (const kalshi of kalshiByCat[cat]) {
+        
+        // Expiry Delta
+        let expiryDeltaMinutes: number | null = null;
+        if (poly.endDate && kalshi.endDate) {
+          expiryDeltaMinutes = Math.abs(new Date(poly.endDate).getTime() - new Date(kalshi.endDate).getTime()) / 60000;
+          if (expiryDeltaMinutes > 1440) continue;
+        }
+
+        const similarity = areMarketsSimilar(poly, kalshi);
+        if (!similarity.isSimilar) continue;
+
+        // Executable Edge (Buy at Ask, Sell at Bid)
+        const polyBuy = ARB_V15_ENABLED ? (poly.yesAsk ?? poly.yesPrice) : poly.yesPrice;
+        const polySell = ARB_V15_ENABLED ? (poly.yesBid ?? poly.yesPrice) : poly.yesPrice;
+        const kalshiBuy = ARB_V15_ENABLED ? (kalshi.yesAsk ?? kalshi.yesPrice) : kalshi.yesPrice;
+        const kalshiSell = ARB_V15_ENABLED ? (kalshi.yesBid ?? kalshi.yesPrice) : kalshi.yesPrice;
+
+        const edgePolyBuy = kalshiSell - polyBuy;
+        const edgeKalshiBuy = polySell - kalshiBuy;
+
+        const isPolyCheaper = edgePolyBuy >= edgeKalshiBuy;
+        const buyPrice = isPolyCheaper ? safePriceForBuy(poly) : safePriceForBuy(kalshi);
+        const sellPrice = isPolyCheaper ? safePriceForSell(kalshi) : safePriceForSell(poly);
+        if (buyPrice <= 0 || sellPrice <= 0 || sellPrice <= buyPrice) continue;
+        
+        // Summed Venue Fees
+        const totalFees = ARB_NET_EDGE_ENABLED
+          ? (FEE_POLY_BPS + FEE_KALSHI_BPS + SLIPPAGE_BPS + LATENCY_BPS)
+          : 0;
+        const grossBps = ((sellPrice - buyPrice) / buyPrice) * 10000;
+        const netEdge = grossBps - totalFees;
+
+        if (netEdge < minNetEdgeBps) continue;
+
+        // Real Liquidity Score
+        const combinedVol = (poly.volume24h || 0) + (kalshi.volume24h || 0);
+        if (combinedVol < MIN_VOLUME_FLOOR) continue;
+
+        opportunities.push({
+          polymarket: poly,
+          kalshi,
+          buyPrice,
+          sellPrice,
+          buyVenue: isPolyCheaper ? 'polymarket' : 'kalshi',
+          sellVenue: isPolyCheaper ? 'kalshi' : 'polymarket',
+          netEdgeBps: Math.round(netEdge),
+          grossEdgeBps: Math.round(grossBps),
+          estimatedFeesBps: FEE_POLY_BPS + FEE_KALSHI_BPS,
+          slippageBps: SLIPPAGE_BPS,
+          latencyRiskBps: LATENCY_BPS,
+          confidence: similarity.confidence,
+          matchReason: similarity.reason,
+          spread: sellPrice - buyPrice,
+          profitPotential: sellPrice - buyPrice,
+          direction: isPolyCheaper ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly',
+          matchConfidence: {
+            score: similarity.confidence,
+            titleSimilarity: similarity.titleSim,
+            keywordOverlap: similarity.keywordOverlap,
+            categoryAligned: true,
+            expiryAligned: (expiryDeltaMinutes || 0) < 60,
+            liquidityAligned: combinedVol >= MIN_VOLUME_FLOOR,
+          },
+          sourceTimestamps: {
+            polymarket: poly.lastUpdated || null,
+            kalshi: kalshi.lastUpdated || null,
+          },
+          expiryDeltaMinutes,
+          asOfTs: new Date().toISOString(),
+          liquidityScore: Math.min(combinedVol / 10000, 1),
+        });
+      }
+    }
+  }
+
+  // Deterministic Sort + Tie-break
+  return opportunities.sort((a, b) => {
+    if (b.netEdgeBps !== a.netEdgeBps) return b.netEdgeBps - a.netEdgeBps;
+    if (b.matchConfidence.score !== a.matchConfidence.score) return b.matchConfidence.score - a.matchConfidence.score;
+    return `${a.polymarket.id}${a.kalshi.id}`.localeCompare(`${b.polymarket.id}${b.kalshi.id}`);
+  });
+}
+
+/**
+ * Get top arbitrage opportunities
+ * Filters by minimum spread and confidence, returns top N
  */
 export function getTopArbitrage(
   markets: Market[],
   options: {
-    minSpread?: number;
-    minConfidence?: number;
+    minNetEdgeBps?: number;
     limit?: number;
     category?: string;
   } = {}
 ): ArbitrageOpportunity[] {
   const {
-    minSpread = 0.03,
-    minConfidence = 0.5,
+    minNetEdgeBps = 50,
     limit = 20,
     category,
   } = options;
 
-  let opportunities = detectArbitrage(markets, minSpread);
+  let opportunities = detectArbitrage(markets, minNetEdgeBps);
 
-  opportunities = opportunities.filter(op => op.confidence >= minConfidence);
-
+  // Filter by category if specified
   if (category) {
     opportunities = opportunities.filter(
       op => op.polymarket.category === category || op.kalshi.category === category
     );
   }
 
+  // Return top N
   return opportunities.slice(0, limit);
 }

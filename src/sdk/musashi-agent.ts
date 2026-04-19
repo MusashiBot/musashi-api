@@ -75,6 +75,29 @@ export interface Sentiment {
 export interface ArbitrageOpportunity {
   polymarket: Market;
   kalshi: Market;
+  buyPrice?: number;
+  sellPrice?: number;
+  buyVenue?: Platform;
+  sellVenue?: Platform;
+  netEdgeBps?: number;
+  grossEdgeBps?: number;
+  estimatedFeesBps?: number;
+  slippageBps?: number;
+  latencyRiskBps?: number;
+  matchConfidence?: {
+    score: number;
+    titleSimilarity: number;
+    keywordOverlap: number;
+    categoryAligned: boolean;
+    expiryAligned: boolean;
+  };
+  sourceTimestamps?: {
+    polymarket: string | null;
+    kalshi: string | null;
+  };
+  expiryDeltaMinutes?: number | null;
+  liquidityScore?: number;
+  asOfTs?: string;
   spread: number;
   profitPotential: number;
   direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
@@ -112,6 +135,9 @@ export interface AnalyzeTextOptions {
 
 export interface GetArbitrageOptions {
   minSpread?: number;
+  minNetEdgeBps?: number;
+  mode?: 'fast' | 'full';
+  maxDataAgeMs?: number;
   minConfidence?: number;
   limit?: number;
   category?: string;
@@ -286,9 +312,12 @@ export class MusashiAgent {
    */
   async getArbitrage(options?: GetArbitrageOptions): Promise<ArbitrageOpportunity[]> {
     const params = new URLSearchParams();
-    if (options?.minSpread) params.set('minSpread', options.minSpread.toString());
-    if (options?.minConfidence) params.set('minConfidence', options.minConfidence.toString());
-    if (options?.limit) params.set('limit', options.limit.toString());
+    if (options?.mode) params.set('mode', options.mode);
+    if (options?.minSpread !== undefined) params.set('minSpread', options.minSpread.toString());
+    if (options?.minNetEdgeBps !== undefined) params.set('minNetEdgeBps', options.minNetEdgeBps.toString());
+    if (options?.maxDataAgeMs !== undefined) params.set('maxDataAgeMs', options.maxDataAgeMs.toString());
+    if (options?.minConfidence !== undefined) params.set('minConfidence', options.minConfidence.toString());
+    if (options?.limit !== undefined) params.set('limit', options.limit.toString());
     if (options?.category) params.set('category', options.category);
 
     const response = await this.request(`/api/markets/arbitrage?${params.toString()}`);
