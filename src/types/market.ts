@@ -13,6 +13,7 @@ export interface Market {
   noBid?: number;   // best executable NO bid when available
   noAsk?: number;   // best executable NO ask when available
   volume24h: number; // 24h trading volume in dollars
+  volume?: number; // alias for volume24h, added so bot can use
   url: string;
   category: string;
   lastUpdated: string; // ISO timestamp

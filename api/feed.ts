@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalyzedTweet, FeedResponse, AccountCategory } from '../src/types/feed';
 import { batchGetFromKV, setFeedCache, getFeedCache, getFeedCacheTimestamp } from './lib/cache-helper';
 import { kv } from './lib/vercel-kv';
+import { getMarkets } from './lib/market-cache'
 
 // ─── KV Storage Keys ───────────────────────────────────────────────────────
 
@@ -129,18 +130,43 @@ export default async function handler(
 
     if (feedIndex.length === 0) {
       // Empty feed (not an error)
+      // Fall back to live market movers so the feed always returns something
+      const markets = await getMarkets();
+
+      const movingMarkets = markets
+        .filter(m => m.platform === 'polymarket')
+        .filter(m => Math.abs(m.oneDayPriceChange ?? 0) >= 0.04)
+        .sort((a, b) => Math.abs(b.oneDayPriceChange ?? 0) - Math.abs(a.oneDayPriceChange ?? 0))
+        .slice(0, limit);
+
+      const syntheticTweets = movingMarkets.map(market => ({
+        tweet: {
+          id: `synthetic-${market.id}`,
+          text: market.title,
+          author: 'synthetic one',
+          created_at: new Date().toISOString(),
+          metrics: { likes: 0, retweets: 0, replies: 0, quotes: 0 },
+          url: market.url,
+        },
+        matches: [],
+        sentiment: {
+          sentiment: (market.oneDayPriceChange ?? 0) > 0 ? 'bullish' : 'bearish',
+          confidence: Math.min(Math.abs(market.oneDayPriceChange ?? 0) * 4, 0.95),
+        },
+        category: market.category ?? 'finance',
+        urgency: Math.abs(market.oneDayPriceChange ?? 0) >= 0.10 ? 'high' : 'medium',
+        confidence: Math.min(0.5 + Math.abs(market.oneDayPriceChange ?? 0) * 2, 0.95),
+        analyzed_at: new Date().toISOString(),
+        collected_at: new Date().toISOString(),
+      }));
+
       const response: FeedResponse = {
         success: true,
         data: {
-          tweets: [],
-          count: 0,
+          tweets: syntheticTweets as any,
+          count: syntheticTweets.length,
           timestamp: new Date().toISOString(),
-          filters: {
-            limit,
-            category,
-            minUrgency,
-            since,
-          },
+          filters: { limit, category, minUrgency, since },
           metadata: {
             processing_time_ms: Date.now() - startTime,
             total_in_kv: 0,
@@ -148,8 +174,7 @@ export default async function handler(
         },
       };
 
-      // Cache for 30 seconds
-      res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate');
+      res.setHeader('Cache-Control', 's-maxage=20, stale-while-revalidate');
       res.status(200).json(response);
       return;
     }
