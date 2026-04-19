@@ -1,5 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+
+//To ensure function doesnt time out
+export const config = {
+  maxDuration: 30,
+};
 
 export default async function handler(
   req: VercelRequest,
@@ -31,92 +35,59 @@ export default async function handler(
   try {
     // Parse query parameters
     const {
+      mode = 'fast',
       minSpread = '0.03',
+      minNetEdgeBps,
       minConfidence = '0.5',
       limit = '20',
       category,
     } = req.query;
 
-    const minSpreadNum = parseFloat(minSpread as string);
+    let effectiveMinBps = 50;
+    if (minNetEdgeBps) {
+      effectiveMinBps = Number(minNetEdgeBps);
+    } else {
+      effectiveMinBps = Math.round(parseFloat(minSpread as string) * 10000);
+    }
+
     const minConfidenceNum = parseFloat(minConfidence as string);
-    const limitNum = parseInt(limit as string, 10);
+    const limitNum = Math.min(parseInt(limit as string, 10), 100);
 
-    // Validate parameters
-    if (isNaN(minSpreadNum) || minSpreadNum < 0 || minSpreadNum > 1) {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid minSpread. Must be between 0 and 1.',
+    let opportunities = await getArbitrage(effectiveMinBps);
+
+    if (category || minConfidenceNum > 0) {
+      opportunities = opportunities.filter(arb => {
+        const matchesCat = !category ||
+          arb.polymarket.category === category ||
+          arb.kalshi.category === category;
+        const matchesConf = arb.confidence >= minConfidenceNum;
+        return matchesCat && matchesConf;
       });
-      return;
     }
 
-    if (isNaN(minConfidenceNum) || minConfidenceNum < 0 || minConfidenceNum > 1) {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid minConfidence. Must be between 0 and 1.',
-      });
-      return;
-    }
+    const result = opportunities.slice(0, limitNum);
+    const freshness = getMarketMetadata();
 
-    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid limit. Must be between 1 and 100.',
-      });
-      return;
-    }
-
-    // Get markets
-    const markets = await getMarkets();
-
-    if (markets.length === 0) {
-      res.status(503).json({
-        success: false,
-        error: 'No markets available. Service temporarily unavailable.',
-      });
-      return;
-    }
-
-    // Get cached arbitrage opportunities (filtered by minSpread)
-    let opportunities = await getArbitrage(minSpreadNum);
-
-    // Apply additional filters client-side
-    // Note: opportunities are already sorted by spread descending from detectArbitrage()
-    opportunities = opportunities
-      .filter(arb => arb.confidence >= minConfidenceNum)
-      .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
-      .slice(0, limitNum);
-
-    // Stage 0: Get freshness metadata
-    const freshnessMetadata = getMarketMetadata();
-
-    // Build response
-    const response = {
+    res.status(200).json({
       success: true,
-      data: {
-        opportunities,
-        count: opportunities.length,
-        timestamp: new Date().toISOString(),
-        filters: {
-          minSpread: minSpreadNum,
-          minConfidence: minConfidenceNum,
-          limit: limitNum,
-          category: category || null,
+      metadata: {
+        processing_time_ms: Date.now() - startTime,
+        data_age_seconds: freshness.data_age_seconds,
+        fetched_at: freshness.fetched_at,
+        mode,
+        thresholds: {
+          applied_net_edge_bps: effectiveMinBps,
+          min_confidence: minConfidenceNum
         },
-        metadata: {
-          processing_time_ms: Date.now() - startTime,
-          markets_analyzed: markets.length,
-          polymarket_count: markets.filter(m => m.platform === 'polymarket').length,
-          kalshi_count: markets.filter(m => m.platform === 'kalshi').length,
-          // Stage 0: Freshness metadata
-          data_age_seconds: freshnessMetadata.data_age_seconds,
-          fetched_at: freshnessMetadata.fetched_at,
-          sources: freshnessMetadata.sources,
-        },
+        markets_analyzed: freshness.sources.polymarket.market_count + freshness.sources.kalshi.market_count,
+        sources: freshness.sources
       },
-    };
+      data: {
+        count: result.length,
+        opportunities: result
+      }
+    });
 
-    res.status(200).json(response);
   } catch (error) {
     console.error('[Arbitrage API] Error:', error);
     res.status(500).json({
