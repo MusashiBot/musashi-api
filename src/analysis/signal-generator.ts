@@ -1,8 +1,22 @@
-// Signal Generator - Converts matched markets into actionable trading signals
-// Computes edge, urgency, signal_type, and suggested_action for bot developers
+// Signal Generator — converts matched markets into actionable trading signals.
+//
+// Changes vs. the legacy version:
+//   • Edge is now SIGNED (buying YES has positive edge only if YES is
+//     underpriced relative to our estimate). The old code used |diff|
+//     which meant a bullish tweet on a 95¢ market returned a big edge
+//     despite there being no room to trade.
+//   • Fees and slippage are applied to every edge/EV number via the
+//     shared `edge.ts` module, so arbitrage spreads and signal EVs use the
+//     same math.
+//   • Adds `ev_per_dollar` and `kelly_fraction` to each signal for bot
+//     developers who want to consume sizing directly.
+//   • Response shape is backwards compatible — new fields are additive,
+//     existing consumers keep working.
 
 import { Market, MarketMatch, ArbitrageOpportunity } from '../types/market';
-import { analyzeSentiment, SentimentResult } from './sentiment-analyzer';
+import { analyzeSentimentForMarket, SentimentResult } from './sentiment-analyzer';
+import { computeEdge, EdgeResult } from './edge';
+import { getFeeModel } from './fees';
 
 export type SignalType = 'arbitrage' | 'news_event' | 'sentiment_shift' | 'user_interest';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -10,13 +24,16 @@ export type Direction = 'YES' | 'NO' | 'HOLD';
 
 export interface SuggestedAction {
   direction: Direction;
-  confidence: number; // 0-1
-  edge: number; // Expected profit edge
+  confidence: number;     // 0..1 — confidence to act on this signal
+  edge: number;           // signed, net of fees, in price units
+  ev_per_dollar: number;  // expected profit per $1 staked
+  kelly_fraction: number; // 0..1 capped (quarter-Kelly by default)
+  breakeven_prob: number; // min prob needed for positive EV
   reasoning: string;
 }
 
 export interface TradingSignal {
-  event_id: string; // Unique ID for this event/tweet
+  event_id: string;
   signal_type: SignalType;
   urgency: UrgencyLevel;
   matches: MarketMatch[];
@@ -26,233 +43,158 @@ export interface TradingSignal {
   metadata: {
     processing_time_ms: number;
     tweet_text?: string;
+    /** Our derived P(YES) used to compute the edge — useful for debugging. */
+    implied_true_prob?: number;
   };
 }
 
-/**
- * Check if tweet contains breaking news keywords
- */
+// ─── Context helpers ─────────────────────────────────────────────────────
+
+const BREAKING_KEYWORDS = [
+  'breaking', 'just in', 'announced', 'confirmed', 'official', 'reports',
+  'alert', 'urgent', 'developing', 'live', 'update:',
+];
+
 function isBreakingNews(text: string): boolean {
-  const breakingKeywords = [
-    'breaking',
-    'just in',
-    'announced',
-    'confirmed',
-    'official',
-    'reports',
-    'alert',
-    'urgent',
-    'developing',
-  ];
-
-  const lowerText = text.toLowerCase();
-  return breakingKeywords.some(kw => lowerText.includes(kw));
+  const lower = text.toLowerCase();
+  return BREAKING_KEYWORDS.some(kw => lower.includes(kw));
 }
 
 /**
- * Calculate implied probability from sentiment
- * Bullish sentiment implies higher YES probability
- * Bearish sentiment implies lower YES probability (higher NO)
+ * Derive a probability estimate for YES from sentiment.
+ *
+ * We deliberately under-shift here. Tweet-level sentiment is noisy and
+ * rarely justifies more than a ±25 percentage-point deviation from an
+ * uninformative 50/50 prior. Callers who want sharper priors should use
+ * /api/ground-probability (where they supply their own explicit estimate).
  */
-function calculateImpliedProbability(sentiment: SentimentResult): number {
-  if (sentiment.sentiment === 'neutral') {
-    return 0.5; // No directional bias
-  }
-
-  if (sentiment.sentiment === 'bullish') {
-    // Bullish: high confidence = higher YES probability
-    return 0.5 + (sentiment.confidence * 0.4); // Range: 0.5 to 0.9
-  }
-
-  // Bearish: high confidence = lower YES probability
-  return 0.5 - (sentiment.confidence * 0.4); // Range: 0.1 to 0.5
+function sentimentToProbability(sentiment: SentimentResult): number {
+  if (sentiment.sentiment === 'neutral') return 0.5;
+  const sign = sentiment.sentiment === 'bullish' ? 1 : -1;
+  const shift = sign * sentiment.confidence * 0.25;
+  return Math.min(0.9, Math.max(0.1, 0.5 + shift));
 }
 
 /**
- * Calculate trading edge for a market given sentiment
- * Edge = how much the sentiment-implied probability differs from market price
+ * Confidence to feed into the edge / Kelly calc. A pure sentiment read on
+ * a tweet is NEVER 100% evidence of the true outcome; we cap at 0.6 so
+ * Kelly sizing stays conservative.
  */
-function calculateEdge(market: Market, sentiment: SentimentResult): number {
-  const impliedProb = calculateImpliedProbability(sentiment);
-  const currentPrice = market.yesPrice;
+function sentimentEdgeConfidence(sentiment: SentimentResult): number {
+  return Math.min(0.6, sentiment.confidence);
+}
 
-  // Raw difference between implied and actual price
-  const priceDiff = Math.abs(impliedProb - currentPrice);
-
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
-
-  return edge;
+function expiresSoonDays(market: Market): number | null {
+  if (!market.endDate) return null;
+  const t = new Date(market.endDate).getTime();
+  if (!Number.isFinite(t)) return null;
+  return (t - Date.now()) / (1000 * 60 * 60 * 24);
 }
 
 /**
- * Check if market expires soon (within 7 days)
- */
-function expiresSoon(market: Market): boolean {
-  if (!market.endDate) return false;
-
-  const endDate = new Date(market.endDate);
-  const now = new Date();
-  const daysUntilExpiry = (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-
-  return daysUntilExpiry <= 7 && daysUntilExpiry > 0;
-}
-
-/**
- * Compute urgency level based on edge, volume, and expiry
+ * Urgency is driven by fee-adjusted edge + liquidity + time to expiry.
+ *
+ * We cap urgency by liquidity: a 90% edge on a $200-volume market is not
+ * actionable, so we refuse to escalate past `medium` unless the market is
+ * tradable in size.
  */
 function computeUrgency(
-  edge: number,
+  edgeNet: number,
   market: Market,
-  hasArbitrage: boolean,
-  arbitrageSpread?: number
+  arbitrage: ArbitrageOpportunity | undefined,
 ): UrgencyLevel {
-  // Critical: Strong edge + high volume + expires soon
-  // OR very high arbitrage spread
-  if (hasArbitrage && arbitrageSpread && arbitrageSpread > 0.05) {
-    return 'critical';
+  // NB: with the covered-bundle detector upstream, `spread` is already the
+  // edge *after* modeled fees + slippage (1 - costPerBundle). So we can
+  // read it straight into urgency tiers — no netProfit subtraction needed.
+  if (arbitrage) {
+    if (arbitrage.spread > 0.03) return 'critical';
+    if (arbitrage.spread > 0.015) return 'high';
   }
 
-  if (edge > 0.15 && market.volume24h > 500000 && expiresSoon(market)) {
-    return 'critical';
-  }
+  const days = expiresSoonDays(market);
+  const highVolume = market.volume24h > 500_000;
+  const tradable = market.volume24h > 25_000; // ≈ enough depth to get $500 filled
+  const soon = days !== null && days <= 7 && days > 0;
 
-  // High: Good edge OR moderate arbitrage
-  if (edge > 0.10) {
-    return 'high';
-  }
+  let urgency: UrgencyLevel = 'low';
+  if (edgeNet > 0.15 && highVolume && soon) urgency = 'critical';
+  else if (edgeNet > 0.10) urgency = 'high';
+  else if (edgeNet > 0.05) urgency = 'medium';
 
-  if (hasArbitrage && arbitrageSpread && arbitrageSpread > 0.03) {
-    return 'high';
-  }
-
-  // Medium: Decent edge
-  if (edge > 0.05) {
+  if (!tradable && (urgency === 'critical' || urgency === 'high')) {
     return 'medium';
   }
-
-  // Low: Match found but no clear edge
-  return 'low';
+  return urgency;
 }
 
-/**
- * Determine signal type based on context
- */
 function computeSignalType(
-  tweetText: string,
+  text: string,
   sentiment: SentimentResult,
-  edge: number,
-  hasArbitrage: boolean
+  edgeNet: number,
+  hasArbitrage: boolean,
 ): SignalType {
-  // Arbitrage takes precedence
-  if (hasArbitrage) {
-    return 'arbitrage';
-  }
-
-  // Breaking news
-  if (isBreakingNews(tweetText)) {
-    return 'news_event';
-  }
-
-  // Sentiment strongly disagrees with market (high edge)
-  if (edge > 0.10 && sentiment.sentiment !== 'neutral') {
-    return 'sentiment_shift';
-  }
-
-  // Default: just a match without strong signal
+  if (hasArbitrage) return 'arbitrage';
+  if (isBreakingNews(text)) return 'news_event';
+  if (edgeNet > 0.10 && sentiment.sentiment !== 'neutral') return 'sentiment_shift';
   return 'user_interest';
 }
 
-/**
- * Generate suggested trading action
- */
-function generateSuggestedAction(
+function buildSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
-  edge: number,
-  urgency: UrgencyLevel
+  edgeResult: EdgeResult,
 ): SuggestedAction {
-  // Don't suggest action if edge is too low
-  if (edge < 0.10) {
+  const direction: Direction = edgeResult.side;
+
+  if (direction === 'HOLD' || edgeResult.evPerDollar <= 0) {
     return {
       direction: 'HOLD',
       confidence: 0,
-      edge: 0,
-      reasoning: 'Insufficient edge to justify a trade',
+      edge: edgeResult.edgeNet,
+      ev_per_dollar: edgeResult.evPerDollar,
+      kelly_fraction: 0,
+      breakeven_prob: edgeResult.breakevenProb,
+      reasoning: edgeResult.reasoning,
     };
   }
 
-  const impliedProb = calculateImpliedProbability(sentiment);
-  const currentPrice = market.yesPrice;
-
-  let direction: Direction;
-  let reasoning: string;
-
-  if (sentiment.sentiment === 'neutral') {
-    direction = 'HOLD';
-    reasoning = 'Neutral sentiment, no clear directional bias';
-  } else if (sentiment.sentiment === 'bullish') {
-    // Bullish sentiment
-    if (impliedProb > currentPrice) {
-      // YES is underpriced
-      direction = 'YES';
-      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bullish sentiment but YES already priced high';
-    }
-  } else {
-    // Bearish sentiment
-    if (impliedProb < currentPrice) {
-      // YES is overpriced, buy NO
-      direction = 'NO';
-      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bearish sentiment but YES already priced low';
-    }
-  }
-
-  // Confidence based on edge and urgency
-  let actionConfidence = edge;
-  if (urgency === 'critical') actionConfidence = Math.min(edge * 1.5, 0.95);
-  else if (urgency === 'high') actionConfidence = Math.min(edge * 1.2, 0.9);
+  // Confidence combines sentiment strength and fee-adjusted edge magnitude.
+  const actionConfidence = Math.min(
+    0.95,
+    0.5 * sentiment.confidence + 0.5 * Math.min(1, Math.abs(edgeResult.edgeNet) * 4),
+  );
 
   return {
     direction,
     confidence: actionConfidence,
-    edge,
-    reasoning,
+    edge: edgeResult.edgeNet,
+    ev_per_dollar: edgeResult.evPerDollar,
+    kelly_fraction: edgeResult.kellyFraction,
+    breakeven_prob: edgeResult.breakevenProb,
+    reasoning: edgeResult.reasoning,
   };
 }
 
 /**
- * Generate event ID from tweet text (deterministic hash)
- * Same text will always produce the same event ID for deduplication
+ * Deterministic 32-bit hash → base36 event id. Same input ⇒ same id, so
+ * downstream consumers can dedupe tweets that we've already scored.
  */
-function generateEventId(tweetText: string): string {
-  // Simple hash function for deterministic IDs
+function generateEventId(text: string): string {
   let hash = 0;
-  for (let i = 0; i < tweetText.length; i++) {
-    const char = tweetText.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash = hash & hash;
   }
-  const hashStr = Math.abs(hash).toString(36);
-  return `evt_${hashStr}`;
+  return `evt_${Math.abs(hash).toString(36)}`;
 }
 
-/**
- * Generate a trading signal from matched markets and tweet text
- */
 export function generateSignal(
   tweetText: string,
   matches: MarketMatch[],
-  arbitrageOpportunity?: ArbitrageOpportunity
+  arbitrageOpportunity?: ArbitrageOpportunity,
 ): TradingSignal {
   const startTime = Date.now();
 
-  // If no matches, return minimal signal
   if (matches.length === 0) {
     return {
       event_id: generateEventId(tweetText),
@@ -266,29 +208,30 @@ export function generateSignal(
     };
   }
 
-  // Analyze tweet sentiment
-  const sentiment = analyzeSentiment(tweetText);
-
-  // Use the top match (highest confidence) for signal computation
   const topMatch = matches[0];
   const topMarket = topMatch.market;
 
-  // Calculate edge
-  const edge = calculateEdge(topMarket, sentiment);
+  const sentiment = analyzeSentimentForMarket(tweetText, topMarket.title);
+  const trueProb = sentimentToProbability(sentiment);
 
-  // Compute urgency
-  const urgency = computeUrgency(
-    edge,
-    topMarket,
+  // Use shared edge / Kelly math so arbitrage and position-sizing agree.
+  const edgeResult = computeEdge({
+    trueProb,
+    yesPrice: topMarket.yesPrice,
+    volume24h: topMarket.volume24h,
+    fees: getFeeModel(topMarket.platform),
+    stake: 100,
+    confidence: sentimentEdgeConfidence(sentiment),
+  });
+
+  const urgency = computeUrgency(edgeResult.edgeNet, topMarket, arbitrageOpportunity);
+  const signal_type = computeSignalType(
+    tweetText,
+    sentiment,
+    edgeResult.edgeNet,
     !!arbitrageOpportunity,
-    arbitrageOpportunity?.spread
   );
-
-  // Determine signal type
-  const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
-
-  // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
+  const suggested_action = buildSuggestedAction(topMarket, sentiment, edgeResult);
 
   return {
     event_id: generateEventId(tweetText),
@@ -301,15 +244,13 @@ export function generateSignal(
     metadata: {
       processing_time_ms: Date.now() - startTime,
       tweet_text: tweetText,
+      implied_true_prob: trueProb,
     },
   };
 }
 
-/**
- * Batch generate signals for multiple tweets
- */
 export function batchGenerateSignals(
-  tweets: { text: string; matches: MarketMatch[] }[]
+  tweets: { text: string; matches: MarketMatch[] }[],
 ): TradingSignal[] {
   return tweets.map(tweet => generateSignal(tweet.text, tweet.matches));
 }
