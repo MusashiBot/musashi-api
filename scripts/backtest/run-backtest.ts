@@ -72,10 +72,25 @@ type Strategy = 'KELLY' | 'FLAT' | 'RANDOM';
 
 interface StrategyMetrics {
   totalReturnPct: number;
+  /**
+   * Per-trade Sharpe pooled over the *active* trades only (stake > 0).
+   * Including skipped slots in the denominator deflates Kelly's number
+   * because a selective strategy pads the distribution with zeros. The
+   * active-only pooled Sharpe matches what a bot would actually see.
+   */
   sharpe: number;
   maxDrawdownPct: number;
+  /**
+   * Win rate over active trades. Skipped slots are not counted as
+   * "losses" because no position was taken.
+   */
   winRate: number;
-  trades: number;
+  /** Slots considered (signals × replications). */
+  totalSlots: number;
+  /** Slots the strategy actually traded (stake > 0). */
+  activeTrades: number;
+  /** activeTrades / totalSlots, per-replication mean. */
+  activeRate: number;
   meanPnl: number;
   stdPnl: number;
 }
@@ -164,17 +179,35 @@ function settleTrade(
   return { pnl, won };
 }
 
+/**
+ * Per-replication metrics.
+ *
+ * `pnlPath` contains one entry per *signal slot* (stake=0 for a slot the
+ * strategy skipped, actual PnL otherwise). Max drawdown and total return
+ * walk the full path (zeros don't change equity). Win rate and Sharpe
+ * are computed over **active** entries only, so a selective strategy
+ * isn't penalised for the slots it correctly refused to trade.
+ */
 function computeMetrics(pnlPath: number[]): StrategyMetrics {
   if (pnlPath.length === 0) {
-    return { totalReturnPct: 0, sharpe: 0, maxDrawdownPct: 0, winRate: 0, trades: 0, meanPnl: 0, stdPnl: 0 };
+    return {
+      totalReturnPct: 0, sharpe: 0, maxDrawdownPct: 0, winRate: 0,
+      totalSlots: 0, activeTrades: 0, activeRate: 0, meanPnl: 0, stdPnl: 0,
+    };
   }
-  const total = pnlPath.reduce((s, x) => s + x, 0);
-  const mean = total / pnlPath.length;
-  const variance = pnlPath.reduce((s, x) => s + (x - mean) ** 2, 0) / pnlPath.length;
-  const std = Math.sqrt(variance);
-  const sharpe = std > 0 ? mean / std : 0;
 
-  // Max drawdown on the cumulative curve
+  const active = pnlPath.filter(p => p !== 0);
+  const total = pnlPath.reduce((s, x) => s + x, 0);
+
+  const activeMean = active.length > 0
+    ? active.reduce((s, x) => s + x, 0) / active.length
+    : 0;
+  const activeVariance = active.length > 0
+    ? active.reduce((s, x) => s + (x - activeMean) ** 2, 0) / active.length
+    : 0;
+  const activeStd = Math.sqrt(activeVariance);
+  const activeSharpe = activeStd > 0 ? activeMean / activeStd : 0;
+
   let equity = BANKROLL_START;
   let peak = equity;
   let maxDd = 0;
@@ -187,12 +220,16 @@ function computeMetrics(pnlPath: number[]): StrategyMetrics {
 
   return {
     totalReturnPct: total / BANKROLL_START,
-    sharpe,
+    sharpe: activeSharpe,
     maxDrawdownPct: maxDd,
-    winRate: pnlPath.filter(p => p > 0).length / pnlPath.length,
-    trades: pnlPath.length,
-    meanPnl: mean,
-    stdPnl: std,
+    winRate: active.length > 0
+      ? active.filter(p => p > 0).length / active.length
+      : 0,
+    totalSlots: pnlPath.length,
+    activeTrades: active.length,
+    activeRate: active.length / pnlPath.length,
+    meanPnl: activeMean,
+    stdPnl: activeStd,
   };
 }
 
@@ -273,11 +310,10 @@ function runReplication(
 /**
  * Aggregate metrics across replications.
  *
- * For Sharpe we *pool* all trades across all replications rather than
- * averaging per-replication Sharpes, because with few trades per rep
- * the per-rep Sharpe is a noisy division by a tiny std. Pooling gives
- * the realized trade-level risk-adjusted return we'd actually observe
- * if we ran the strategy over the full simulated universe.
+ * Sharpe and mean/std are pooled across *active* trades from every
+ * replication; per-rep Sharpe on a handful of active trades is too
+ * noisy to average. totalReturn, maxDD, winRate, activeRate are means
+ * of the per-replication numbers.
  */
 function averageMetrics(results: { pnlPath: number[]; brierSum: number; brierCount: number }[]): StrategyMetrics & { brier: number } {
   const perRepMetrics = results.map(r => computeMetrics(r.pnlPath));
@@ -286,11 +322,14 @@ function averageMetrics(results: { pnlPath: number[]; brierSum: number; brierCou
 
   const brier = results.reduce((s, r) => s + (r.brierCount > 0 ? r.brierSum / r.brierCount : 0), 0) / results.length;
 
-  // Pool across ALL trades for Sharpe.
-  const allPnls: number[] = [];
-  for (const r of results) allPnls.push(...r.pnlPath);
-  const pooledMean = allPnls.reduce((s, x) => s + x, 0) / Math.max(1, allPnls.length);
-  const pooledVar = allPnls.reduce((s, x) => s + (x - pooledMean) ** 2, 0) / Math.max(1, allPnls.length);
+  const activePnls: number[] = [];
+  for (const r of results) for (const p of r.pnlPath) if (p !== 0) activePnls.push(p);
+  const pooledMean = activePnls.length > 0
+    ? activePnls.reduce((s, x) => s + x, 0) / activePnls.length
+    : 0;
+  const pooledVar = activePnls.length > 0
+    ? activePnls.reduce((s, x) => s + (x - pooledMean) ** 2, 0) / activePnls.length
+    : 0;
   const pooledStd = Math.sqrt(pooledVar);
   const pooledSharpe = pooledStd > 0 ? pooledMean / pooledStd : 0;
 
@@ -299,7 +338,9 @@ function averageMetrics(results: { pnlPath: number[]; brierSum: number; brierCou
     sharpe: pooledSharpe,
     maxDrawdownPct: mean(m => m.maxDrawdownPct),
     winRate: mean(m => m.winRate),
-    trades: perRepMetrics[0]?.trades ?? 0,
+    totalSlots: perRepMetrics[0]?.totalSlots ?? 0,
+    activeTrades: Math.round(mean(m => m.activeTrades)),
+    activeRate: mean(m => m.activeRate),
     meanPnl: pooledMean,
     stdPnl: pooledStd,
     brier,
@@ -345,23 +386,25 @@ function main(): void {
   }
 
   console.log('### Headline (calibration = 1.0, ' + REPLICATIONS + ' replications)\n');
-  console.log('| strategy | total return |  Sharpe | max DD | win rate |   Brier |');
-  console.log('|----------|-------------:|--------:|-------:|---------:|--------:|');
+  console.log('| strategy | active / slots | total return | active Sharpe | max DD | active win rate |   Brier |');
+  console.log('|----------|---------------:|-------------:|--------------:|-------:|----------------:|--------:|');
   for (const s of strategies) {
     const m = headline[s];
+    const slots = m.totalSlots;
     console.log(
-      `| ${s.padEnd(8)} | ${fmtPct(m.totalReturnPct).padStart(12)} |` +
-      ` ${m.sharpe.toFixed(3).padStart(7)} |` +
+      `| ${s.padEnd(8)} | ${`${m.activeTrades}/${slots}`.padStart(14)} |` +
+      ` ${fmtPct(m.totalReturnPct).padStart(12)} |` +
+      ` ${m.sharpe.toFixed(3).padStart(13)} |` +
       ` ${fmtPct(m.maxDrawdownPct).padStart(6)} |` +
-      ` ${fmtPct(m.winRate).padStart(8)} |` +
+      ` ${fmtPct(m.winRate).padStart(15)} |` +
       ` ${m.brier.toFixed(3).padStart(7)} |`,
     );
   }
 
   // 2) Calibration sensitivity
   console.log('\n### Kelly sensitivity to signal calibration\n');
-  console.log('| calibration | total return |  Sharpe | max DD | win rate |');
-  console.log('|------------:|-------------:|--------:|-------:|---------:|');
+  console.log('| calibration | total return | active Sharpe | max DD | active win rate |');
+  console.log('|------------:|-------------:|--------------:|-------:|----------------:|');
   const sens: Array<{ calibration: number; metrics: StrategyMetrics & { brier: number } }> = [];
   for (const c of CALIBRATION_POINTS) {
     const results: { pnlPath: number[]; brierSum: number; brierCount: number }[] = [];
@@ -373,9 +416,9 @@ function main(): void {
     sens.push({ calibration: c, metrics: m });
     console.log(
       `| ${c.toFixed(2).padStart(11)} | ${fmtPct(m.totalReturnPct).padStart(12)} |` +
-      ` ${m.sharpe.toFixed(3).padStart(7)} |` +
+      ` ${m.sharpe.toFixed(3).padStart(13)} |` +
       ` ${fmtPct(m.maxDrawdownPct).padStart(6)} |` +
-      ` ${fmtPct(m.winRate).padStart(8)} |`,
+      ` ${fmtPct(m.winRate).padStart(15)} |`,
     );
   }
 

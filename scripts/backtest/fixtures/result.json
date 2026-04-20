@@ -2,39 +2,45 @@
   "corpus": {
     "tweets": 30,
     "markets": 1857,
-    "signals": 4
+    "signals": 1
   },
   "replications": 500,
   "headline": {
     "KELLY": {
       "totalReturnPct": 0.1744658755739615,
-      "sharpe": 0.36043196281628453,
+      "sharpe": 0.9227702038203712,
       "maxDrawdownPct": 0.035196562750218034,
-      "winRate": 0.1775,
-      "trades": 4,
-      "meanPnl": 436.16468893490276,
-      "stdPnl": 1210.1165654867848,
+      "winRate": 0.71,
+      "totalSlots": 1,
+      "activeTrades": 1,
+      "activeRate": 1,
+      "meanPnl": 1744.658755739611,
+      "stdPnl": 1890.67521742307,
       "brier": 0.20626274322490995
     },
     "FLAT": {
-      "totalReturnPct": 0.056204351695656324,
-      "sharpe": 0.5702275032812809,
-      "maxDrawdownPct": 0.017411534869675803,
-      "winRate": 0.542,
-      "trades": 4,
-      "meanPnl": 140.51087923914105,
-      "stdPnl": 246.4119644012156,
-      "brier": 0.239065685806228
+      "totalReturnPct": 0.018532627001076798,
+      "sharpe": 0.9802120866817153,
+      "maxDrawdownPct": 0.0032047048363544202,
+      "winRate": 0.71,
+      "totalSlots": 1,
+      "activeTrades": 1,
+      "activeRate": 1,
+      "meanPnl": 185.32627001076727,
+      "stdPnl": 189.06752174230695,
+      "brier": 0.20626274322490995
     },
     "RANDOM": {
-      "totalReturnPct": 0.018317739628056166,
-      "sharpe": 0.228416913978894,
-      "maxDrawdownPct": 0.018949250544563687,
-      "winRate": 0.491,
-      "trades": 4,
-      "meanPnl": 45.79434907014083,
-      "stdPnl": 200.4858058557445,
-      "brier": 0.23982950252985752
+      "totalReturnPct": 0.006280806797670875,
+      "sharpe": 0.33064253626935813,
+      "maxDrawdownPct": 0.005297763040545185,
+      "winRate": 0.5,
+      "totalSlots": 1,
+      "activeTrades": 1,
+      "activeRate": 1,
+      "meanPnl": 62.808067976709445,
+      "stdPnl": 189.9576161173129,
+      "brier": 0.2093180101194281
     }
   },
   "sensitivity": [
@@ -42,12 +48,14 @@
       "calibration": 0,
       "metrics": {
         "totalReturnPct": -0.012200791092705646,
-        "sharpe": -0.03324064257980448,
+        "sharpe": -0.06659174663426193,
         "maxDrawdownPct": 0.08956918382641632,
-        "winRate": 0.0655,
-        "trades": 4,
-        "meanPnl": -30.50197773176413,
-        "stdPnl": 917.6109534746406,
+        "winRate": 0.262,
+        "totalSlots": 1,
+        "activeTrades": 1,
+        "activeRate": 1,
+        "meanPnl": -122.00791092705651,
+        "stdPnl": 1832.1776660575317,
         "brier": 0.37735768931791497
       }
     },
@@ -55,12 +63,14 @@
       "calibration": 0.25,
       "metrics": {
         "totalReturnPct": 0.03696587557396098,
-        "sharpe": 0.09026529795102647,
+        "sharpe": 0.18277828414400002,
         "maxDrawdownPct": 0.07524782381081074,
-        "winRate": 0.095,
-        "trades": 4,
-        "meanPnl": 92.41468893490303,
-        "stdPnl": 1023.8119303061815,
+        "winRate": 0.38,
+        "totalSlots": 1,
+        "activeTrades": 1,
+        "activeRate": 1,
+        "meanPnl": 369.6587557396121,
+        "stdPnl": 2022.4435165852644,
         "brier": 0.33229250262377547
       }
     },
@@ -68,12 +78,14 @@
       "calibration": 0.5,
       "metrics": {
         "totalReturnPct": 0.08279920890729482,
-        "sharpe": 0.18793323177629834,
+        "sharpe": 0.3975157138496869,
         "maxDrawdownPct": 0.061897403457280065,
-        "winRate": 0.1225,
-        "trades": 4,
-        "meanPnl": 206.998022268235,
-        "stdPnl": 1101.444488086226,
+        "winRate": 0.49,
+        "totalSlots": 1,
+        "activeTrades": 1,
+        "activeRate": 1,
+        "meanPnl": 827.99208907294,
+        "stdPnl": 2082.916624991659,
         "brier": 0.290282582824154
       }
     },
@@ -81,12 +93,14 @@
       "calibration": 0.75,
       "metrics": {
         "totalReturnPct": 0.13529920890729513,
-        "sharpe": 0.2889951413768627,
+        "sharpe": 0.6676525787045284,
         "maxDrawdownPct": 0.04660510377959908,
-        "winRate": 0.154,
-        "trades": 4,
-        "meanPnl": 338.2480222682361,
-        "stdPnl": 1170.4280586058208,
+        "winRate": 0.616,
+        "totalSlots": 1,
+        "activeTrades": 1,
+        "activeRate": 1,
+        "meanPnl": 1352.9920890729445,
+        "stdPnl": 2026.491220476084,
         "brier": 0.24216212923549596
       }
     },
@@ -94,15 +108,17 @@
       "calibration": 1,
       "metrics": {
         "totalReturnPct": 0.1836325422406279,
-        "sharpe": 0.37688850231655235,
+        "sharpe": 0.9950340691255316,
         "maxDrawdownPct": 0.03252647867951183,
-        "winRate": 0.183,
-        "trades": 4,
-        "meanPnl": 459.0813556015697,
-        "stdPnl": 1218.0826763878904,
+        "winRate": 0.732,
+        "totalSlots": 1,
+        "activeTrades": 1,
+        "activeRate": 1,
+        "meanPnl": 1836.325422406279,
+        "stdPnl": 1845.4899981666974,
         "brier": 0.19786075926498542
       }
     }
   ],
-  "generatedAt": "2026-04-20T20:00:48.147Z"
+  "generatedAt": "2026-04-20T21:05:05.535Z"
 }
