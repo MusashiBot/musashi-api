@@ -53,13 +53,14 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
 
   for (let i = 0; i < words.length; i++) {
     const word = words[i].replace(/[^a-z]/g, '');
-    const prevWord = i > 0 ? words[i - 1].replace(/[^a-z]/g, '') : '';
 
-    // Check for negation
-    const isNegated = NEGATIONS.includes(prevWord);
+    // Check for negation within the preceding 3 words (not just 1)
+    const windowStart = Math.max(0, i - 3);
+    const precedingWords = words.slice(windowStart, i).map(w => w.replace(/[^a-z]/g, ''));
+    const isNegated = precedingWords.some(w => NEGATIONS.includes(w));
 
-    // Check for strong modifier
-    const isStrong = STRONG_MODIFIERS.includes(prevWord);
+    // Check for strong modifier in the preceding 3 words
+    const isStrong = precedingWords.some(w => STRONG_MODIFIERS.includes(w));
     const weight = isStrong ? 2 : 1;
 
     // Check bullish
@@ -81,7 +82,7 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
     }
   }
 
-  // Calculate total and determine sentiment
+  // Calculate net signal and total evidence
   const total = bullishScore + bearishScore;
 
   if (total === 0) {
@@ -91,13 +92,18 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
   const bullishRatio = bullishScore / total;
   const bearishRatio = bearishScore / total;
 
-  // Need strong signal to classify (>60%)
+  // confidenceScaling scales down confidence when we have few matching signals.
+  // A single bullish keyword should not be 100% confident.
+  // We require at least 3 strong keyword hits to reach full confidence.
+  const confidenceScaling = Math.min(1, total / 3);
+
+  // Need strong directional bias to classify (>60%)
   if (bullishRatio > 0.6) {
-    return { sentiment: 'bullish', confidence: bullishRatio };
+    return { sentiment: 'bullish', confidence: bullishRatio * confidenceScaling };
   }
 
   if (bearishRatio > 0.6) {
-    return { sentiment: 'bearish', confidence: bearishRatio };
+    return { sentiment: 'bearish', confidence: bearishRatio * confidenceScaling };
   }
 
   // Mixed or weak signal

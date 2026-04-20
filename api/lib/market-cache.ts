@@ -8,6 +8,8 @@ import { Market, ArbitrageOpportunity } from '../../src/types/market';
 import { fetchPolymarkets } from '../../src/api/polymarket-client';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
+import { detectIntraEventArbitrage } from '../../src/api/intra-event-arbitrage';
+import type { GroupArbitrageOpportunity } from '../../src/types/market';
 import { FreshnessMetadata, SourceStatus } from './types';
 
 // In-memory cache for markets
@@ -25,10 +27,14 @@ let polyError: string | null = null;
 let kalshiError: string | null = null;
 
 // In-memory cache for arbitrage opportunities
-// Default: 15 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
+// Default: 20 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
 let cachedArbitrage: ArbitrageOpportunity[] = [];
 let arbCacheTimestamp = 0;
-const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '15', 10)) * 1000;
+const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '20', 10)) * 1000;
+
+// In-memory cache for intra-event (group) arbitrage opportunities
+let cachedGroupArbitrage: GroupArbitrageOpportunity[] = [];
+let groupArbCacheTimestamp = 0;
 
 const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
 const POLYMARKET_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_POLYMARKET_MAX_PAGES, 20);
@@ -205,6 +211,38 @@ export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageO
   // Filter cached results by requested minSpread
   const filtered = cachedArbitrage.filter(arb => arb.spread >= minSpread);
   console.log(`[Arbitrage Cache] Returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
+
+  return filtered;
+}
+
+/**
+ * Get cached intra-event (group) arbitrage opportunities.
+ *
+ * These are opportunities within a single platform where multiple markets
+ * represent mutually-exclusive outcomes of the same event (e.g. Kalshi range
+ * buckets) and their YES prices do not sum to 1.
+ *
+ * Cache is computed with minEdge=0 so that callers can filter to any threshold
+ * without triggering a recompute (same pattern as getArbitrage).
+ *
+ * @param minEdge - Minimum net edge required (default: 0.01)
+ * @returns GroupArbitrageOpportunity array, sorted by edge descending
+ */
+export async function getGroupArbitrage(minEdge: number = 0.01): Promise<GroupArbitrageOpportunity[]> {
+  const markets = await getMarkets();
+  const now = Date.now();
+
+  // Recompute alongside the cross-platform cache (same TTL).
+  // Use minEdge=0 so every profitable group is cached; callers filter client-side.
+  if (cachedGroupArbitrage.length === 0 || (now - groupArbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
+    console.log('[GroupArbitrage Cache] Computing intra-event arbitrage opportunities...');
+    cachedGroupArbitrage = detectIntraEventArbitrage(markets, 0);
+    groupArbCacheTimestamp = now;
+    console.log(`[GroupArbitrage Cache] Cached ${cachedGroupArbitrage.length} opportunities (TTL: ${ARB_CACHE_TTL_MS}ms)`);
+  }
+
+  const filtered = cachedGroupArbitrage.filter(op => op.edge >= minEdge);
+  console.log(`[GroupArbitrage Cache] Returning ${filtered.length}/${cachedGroupArbitrage.length} opportunities (minEdge: ${minEdge})`);
 
   return filtered;
 }

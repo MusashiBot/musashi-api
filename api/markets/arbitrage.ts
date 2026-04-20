@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import { getMarkets, getArbitrage, getGroupArbitrage, getMarketMetadata } from '../lib/market-cache';
 
 export default async function handler(
   req: VercelRequest,
@@ -77,14 +77,23 @@ export default async function handler(
       return;
     }
 
-    // Get cached arbitrage opportunities (filtered by minSpread)
-    let opportunities = await getArbitrage(minSpreadNum);
+    // Fetch both cross-platform and intra-event arbitrage in parallel
+    const [crossPlatformOpportunities, groupOpportunitiesRaw] = await Promise.all([
+      getArbitrage(minSpreadNum),
+      getGroupArbitrage(minSpreadNum),
+    ]);
 
-    // Apply additional filters client-side
-    // Note: opportunities are already sorted by spread descending from detectArbitrage()
-    opportunities = opportunities
+    // Apply additional filters to cross-platform opportunities
+    let opportunities = crossPlatformOpportunities
       .filter(arb => arb.confidence >= minConfidenceNum)
       .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
+      .slice(0, limitNum);
+
+    // Apply category filter to intra-event opportunities.
+    // All legs of a group share the same platform and category, so checking the
+    // first leg is sufficient (avoids iterating all legs on every filter call).
+    const groupOpportunities = groupOpportunitiesRaw
+      .filter(op => !category || op.legs[0]?.market.category === category)
       .slice(0, limitNum);
 
     // Stage 0: Get freshness metadata
@@ -94,8 +103,12 @@ export default async function handler(
     const response = {
       success: true,
       data: {
+        // Cross-platform arbitrage (Polymarket vs Kalshi, covered YES/NO bundle)
         opportunities,
         count: opportunities.length,
+        // Intra-event arbitrage (same platform, range sums / match outcomes)
+        group_opportunities: groupOpportunities,
+        group_count: groupOpportunities.length,
         timestamp: new Date().toISOString(),
         filters: {
           minSpread: minSpreadNum,

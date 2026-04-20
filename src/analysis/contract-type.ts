@@ -1,12 +1,13 @@
-import { Market } from '../types/market';
-
-// Detect contract type and classifies markets by their prediction structure (not topic/domain).
+// Contract type detection
+// Classifies markets by their prediction *structure* (not topic/domain).
 // Two markets should only be compared for equivalence if they share the same type.
+
+import { Market } from '../types/market';
 
 /**
  * Prediction structure types.
  *
- * These represent the shape of a contract, not its subject matter.
+ * These represent the *shape* of a contract, not its subject matter.
  *
  * | Type               | Example                                        |
  * |--------------------|------------------------------------------------|
@@ -48,6 +49,10 @@ const TIME_WINDOW_PATTERN =
  * THRESHOLD_PRICE rather than TIME_WINDOW_BINARY.
  */
 export function detectContractType(market: Market): ContractType {
+  // Use only the title for classification so that cross-platform description
+  // differences (Polymarket includes deadline prose; Kalshi descriptions are
+  // empty) do not cause asymmetric contract-type assignments for equivalent
+  // markets.
   const text = market.title;
 
   // 1. RANGE_COUNT – explicit numeric interval wins over everything else

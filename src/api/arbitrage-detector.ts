@@ -50,6 +50,11 @@ const DEFAULT_FEES_AND_SLIPPAGE = Number.parseFloat(
   process.env.MUSASHI_ARB_COST_BUFFER ?? '0.02',
 );
 
+// Contract types that are structurally interchangeable for arbitrage matching.
+// Both settle to a single YES/NO outcome; the time-window qualifier is a detail
+// that one platform may omit in its title while the other includes it.
+const BINARY_COMPATIBLE_TYPES = new Set<string>(['TIME_WINDOW_BINARY', 'BINARY_OUTCOME']);
+
 function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
@@ -142,11 +147,22 @@ function hasConflict(a: Set<string>, b: Set<string>): boolean {
   return a.size > 0 && b.size > 0 && intersectionSize(a, b) === 0;
 }
 
+// Weight applied to the containment score when used as a Jaccard fallback.
+// Halved so that a fully-contained short title doesn't dominate the composite
+// confidence score the same way a high Jaccard score would.
+const CONTAINMENT_WEIGHT = 0.5;
+
 function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   const shared = intersectionSize(a, b);
   const union = a.size + b.size - shared;
-  return union > 0 ? shared / union : 0;
+  const jaccardScore = union > 0 ? shared / union : 0;
+  // When one set is much smaller (e.g. a short Kalshi title after stop-word
+  // filtering), pure Jaccard is unfairly penalised by the large union. Use a
+  // weighted containment score (fraction of the smaller set that is covered) as
+  // a fallback so short but highly-overlapping titles still match.
+  const containment = shared / Math.min(a.size, b.size);
+  return Math.max(jaccardScore, containment * CONTAINMENT_WEIGHT);
 }
 
 function calculateKeywordOverlap(market1: Market, market2: Market): number {
@@ -163,12 +179,19 @@ function areMarketsSimilar(poly: Market, kalshi: Market): MatchResult {
   if (!strictCategoryMatch && !categoryUnknown) {
     return { isSimilar: false, confidence: 0, reason: 'Different categories' };
   }
+
   // Gate 2: Contract structure type must match.
   // e.g. a numeric-range contract can never be equivalent to a head-to-head
   // match-outcome contract, regardless of how similar their titles appear.
+  // TIME_WINDOW_BINARY is structurally compatible with BINARY_OUTCOME: both
+  // settle to a single YES/NO outcome; the time-window qualifier is a detail
+  // that one platform may omit in its title while the other includes it.
   const polyType = detectContractType(poly);
   const kalshiType = detectContractType(kalshi);
-  if (polyType !== kalshiType) {
+  const typesCompatible =
+    polyType === kalshiType ||
+    (BINARY_COMPATIBLE_TYPES.has(polyType) && BINARY_COMPATIBLE_TYPES.has(kalshiType));
+  if (!typesCompatible) {
     return { isSimilar: false, confidence: 0, reason: `Different contract types (${polyType} vs ${kalshiType})` };
   }
 
@@ -269,25 +292,14 @@ function priceBundle(poly: Market, kalshi: Market, feesAndSlippage: number): Bun
 }
 
 function candidatesFor(poly: Market, kalshiByCategory: Map<string, Market[]>): Market[] {
-
   if (poly.category === 'other') {
     return kalshiByCategory.get('other') ?? [];
   }
-  
+
   const sameCategory = kalshiByCategory.get(poly.category) ?? [];
   const fallback = (kalshiByCategory.get('other') ?? []).slice(0, 5);
-  
+
   return [...sameCategory, ...fallback];
-  /*
-  return [
-    
-    ...(kalshiByCategory.get(poly.category) ?? []),
-    ...(kalshiByCategory.get('other') ?? []),
-    
-   
-  ];
-  */
-  //return kalshiByCategory.get(poly.category) ?? [];
 }
 
 /**
@@ -301,7 +313,7 @@ function candidatesFor(poly: Market, kalshiByCategory: Map<string, Market[]>): M
  */
 export function detectArbitrage(
   markets: Market[],
-  minSpread: number = 0.01, //FOR DEBUG: FROM 0.03 TO 0.01
+  minSpread: number = 0.03, //FOR DEBUG: FROM 0.03 TO 0.01 to be more inclusive in testing
   feesAndSlippage: number = DEFAULT_FEES_AND_SLIPPAGE,
 ): ArbitrageOpportunity[] {
   const opportunities: ArbitrageOpportunity[] = [];
