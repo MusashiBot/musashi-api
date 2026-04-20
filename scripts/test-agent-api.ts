@@ -28,7 +28,8 @@ const VERCEL_AUTOMATION_BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SEC
 const CLIENT_ID = process.env.MUSASHI_TEST_CLIENT_ID || `agent-api-test-${Date.now()}`;
 const TEST_WALLET = process.env.MUSASHI_TEST_WALLET || '0x0000000000000000000000000000000000000000';
 const TEST_MARKET_ID = process.env.MUSASHI_TEST_MARKET_ID || 'polymarket-test-market';
-const TIMEOUT_MS = readIntEnv('MUSASHI_TEST_TIMEOUT_MS', 15000);
+/** Default 30s — production serverless cold starts + analyze-text often exceed 15s under load. */
+const TIMEOUT_MS = readIntEnv('MUSASHI_TEST_TIMEOUT_MS', 30000);
 const LATENCY_SAMPLE_SIZE = readIntEnv('MUSASHI_TEST_LATENCY_SAMPLES', 20);
 const INCLUDE_PERF =
   process.env.MUSASHI_TEST_INCLUDE_PERF === '1' ||

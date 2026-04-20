@@ -1,0 +1,272 @@
+# ML Signal Scoring System
+
+This module implements machine learning-based signal quality prediction for the Musashi prediction market trading system.
+
+## Overview
+
+The ML signal scorer learns from historical signal outcomes to predict the probability that a new signal will be correct. It uses a simple logistic regression model trained on features extracted from the signal generation process.
+
+## Components
+
+### 1. `train-signal-scorer.ts`
+
+Training script that:
+- Fetches resolved signals from the `signal_outcomes` table (requires 500+ samples)
+- Extracts 19 numeric features from the feature JSON
+- Trains a logistic regression model with L2 regularization
+- Evaluates on 20% test set with accuracy, precision, recall, F1, and Brier score
+- Exports model weights as JSON to `models/signal-scorer-v1.json`
+
+**Usage:**
+```bash
+node --import tsx src/ml/train-signal-scorer.ts
+```
+
+**Requirements:**
+- At least 500 resolved signals in the database
+- Supabase credentials set in environment
+
+### 2. `signal-scorer-model.ts`
+
+Inference module that:
+- Loads trained model weights from JSON file
+- Provides `predictSignalQuality(features)` function
+- Returns calibrated probability (0-1) of signal being correct
+- Falls back to heuristic scoring if model is not available
+
+**API:**
+
+```typescript
+import { predictSignalQuality, isModelAvailable } from './ml/signal-scorer-model';
+
+// Check if model is available
+if (isModelAvailable()) {
+  // Predict signal quality
+  const prediction = predictSignalQuality({
+    sentiment_confidence: 0.8,
+    yes_price: 0.65,
+    volume_24h: 250000,
+    match_confidence: 0.9,
+    num_matches: 3,
+    edge: 0.12,
+    // ... other features
+  });
+
+  console.log(`Probability: ${prediction.probability}`);
+  console.log(`Confidence: ${prediction.confidence}`);
+  console.log(`Source: ${prediction.source}`); // 'ml_model' or 'heuristic'
+}
+```
+
+### 3. `generate-synthetic-data.ts`
+
+Synthetic data generator that:
+- Creates 1000 realistic training examples (configurable)
+- Uses existing signal-generator logic with synthetic markets
+- Simulates outcomes based on signal quality
+- Saves to `signal_outcomes` table with resolution data
+- Useful for bootstrapping before real resolution data exists
+
+**Usage:**
+```bash
+# Generate 1000 examples (default)
+node --import tsx src/ml/generate-synthetic-data.ts
+
+# Generate custom number
+node --import tsx src/ml/generate-synthetic-data.ts 2000
+```
+
+### 4. Integration with `signal-generator.ts`
+
+The ML model is integrated into the signal generation pipeline:
+
+```typescript
+import { generateSignal } from './analysis/signal-generator';
+
+// Generate signal with ML scoring enabled
+const signal = generateSignal(
+  tweetText,
+  matches,
+  arbitrageOpportunity,
+  'normal', // volatility regime
+  { use_ml_scorer: true } // Enable ML scoring
+);
+
+// ML score is available in the signal
+if (signal.ml_score) {
+  console.log(`ML probability: ${signal.ml_score.probability}`);
+  console.log(`ML confidence: ${signal.ml_score.confidence}`);
+  
+  // The suggested_action.confidence has been adjusted by ML model
+  console.log(`Adjusted confidence: ${signal.suggested_action.confidence}`);
+}
+```
+
+**Backward Compatibility:**
+- ML scoring is **disabled by default** (`use_ml_scorer: false`)
+- Signals generated without ML flag work exactly as before
+- If model is not available, falls back to rule-based scoring
+
+## Features
+
+The model uses 19 features:
+
+### Sentiment Features
+- `sentiment_confidence`: Confidence in sentiment analysis (0-1)
+- `is_bullish`: Binary flag for bullish sentiment
+- `is_bearish`: Binary flag for bearish sentiment
+
+### Market Features
+- `yes_price`: Current YES price (0-1)
+- `volume_24h_log`: Log-transformed 24h trading volume
+- `one_day_price_change`: 24h price delta
+- `is_anomalous`: Binary flag for anomalous price movement
+
+### Match Features
+- `match_confidence`: Keyword match confidence (0-1)
+- `num_matches`: Number of matched markets
+
+### Signal Features
+- `edge`: Expected profit edge
+- `kelly_fraction`: Kelly criterion position size
+- `is_near_resolution`: Binary flag for markets resolving within 7 days
+- `processing_time_ms_log`: Log-transformed processing time
+
+### Arbitrage Features
+- `has_arbitrage`: Binary flag for arbitrage opportunity
+- `arbitrage_spread`: Cross-platform price spread
+
+### Signal Type Features
+- `is_news_event`: Binary flag for news event signals
+- `is_arbitrage`: Binary flag for arbitrage signals
+- `is_high_urgency`: Binary flag for high urgency
+- `is_critical_urgency`: Binary flag for critical urgency
+
+## Workflow
+
+### Initial Setup (No Real Data Yet)
+
+1. **Generate synthetic data:**
+   ```bash
+   node --import tsx src/ml/generate-synthetic-data.ts 1000
+   ```
+
+2. **Train initial model:**
+   ```bash
+   node --import tsx src/ml/train-signal-scorer.ts
+   ```
+
+3. **Enable ML scoring in production:**
+   ```typescript
+   const signal = generateSignal(tweet, matches, arb, 'normal', { use_ml_scorer: true });
+   ```
+
+### Production Workflow (With Real Data)
+
+1. **Signals are logged automatically** during generation (via `logSignal()`)
+
+2. **Resolution monitoring** updates signals with outcomes:
+   ```typescript
+   import { updateResolution } from './db/signal-outcomes';
+   
+   await updateResolution(signalId, 'YES', true, 42.50);
+   ```
+
+3. **Retrain periodically** (e.g., weekly):
+   ```bash
+   node --import tsx src/ml/train-signal-scorer.ts
+   ```
+
+4. **Reload model in running server:**
+   ```typescript
+   import { reloadModel } from './ml/signal-scorer-model';
+   
+   reloadModel(); // Reloads from disk
+   ```
+
+## Model Performance
+
+The model is evaluated on:
+
+- **Accuracy**: % of correct predictions
+- **Precision**: % of predicted-correct signals that were actually correct
+- **Recall**: % of actually-correct signals that were predicted-correct
+- **F1 Score**: Harmonic mean of precision and recall
+- **Brier Score**: Mean squared error of probability predictions (lower is better)
+
+Example output:
+```
+─── Test Set Performance ───
+Accuracy:      73.45%
+Precision:     71.23%
+Recall:        78.91%
+F1 Score:      74.89%
+Brier Score:   0.1823 (lower is better)
+
+─── Feature Importance ───
+ 1. edge                           +0.4521
+ 2. arbitrage_spread               +0.3102
+ 3. is_critical_urgency            +0.2876
+ 4. sentiment_confidence           +0.2341
+ 5. match_confidence               +0.1923
+```
+
+## Model File Format
+
+The model is saved as a JSON file at `src/ml/models/signal-scorer-v1.json`:
+
+```json
+{
+  "version": "v1",
+  "trained_at": "2026-04-18T12:34:56.789Z",
+  "feature_names": ["sentiment_confidence", "yes_price", ...],
+  "weights": [0.234, -0.123, ...],
+  "bias": 0.456,
+  "metrics": {
+    "accuracy": 0.7345,
+    "precision": 0.7123,
+    "recall": 0.7891,
+    "f1_score": 0.7489,
+    "brier_score": 0.1823,
+    "n_samples": 1250,
+    "n_train": 1000,
+    "n_test": 250
+  },
+  "feature_stats": {
+    "means": [0.65, 0.52, ...],
+    "stds": [0.23, 0.15, ...]
+  }
+}
+```
+
+## Deployment Considerations
+
+### Model Availability
+- The model file is portable (pure JSON, no binary dependencies)
+- Can be version-controlled with the codebase
+- Falls back gracefully if model file is missing
+
+### Performance
+- Inference is very fast (< 1ms per prediction)
+- No GPU or heavy ML framework required
+- Simple dot product + sigmoid computation
+
+### Retraining
+- Recommended: weekly retraining as new data accumulates
+- Can be automated via cron job or scheduled task
+- Model version and training date are tracked in the JSON file
+
+### Monitoring
+- Track ML model availability with `isModelAvailable()`
+- Log when fallback heuristic is used
+- Monitor model metrics over time to detect degradation
+
+## Future Improvements
+
+Potential enhancements:
+- Add time-based features (hour of day, day of week)
+- Implement decision tree or random forest for non-linear patterns
+- Add more sophisticated feature engineering
+- Implement online learning for continuous model updates
+- Add model versioning and A/B testing framework
+- Track prediction calibration over time

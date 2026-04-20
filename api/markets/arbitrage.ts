@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import {
+  getClientIp,
+  isRateLimited,
+  parsePositiveIntEnv,
+} from '../lib/rate-limit';
 
 export default async function handler(
   req: VercelRequest,
@@ -22,6 +27,15 @@ export default async function handler(
     res.status(405).json({
       success: false,
       error: 'Method not allowed. Use GET.',
+    });
+    return;
+  }
+
+  const arbLimit = parsePositiveIntEnv('MUSASHI_ARBITRAGE_RATE_LIMIT_PER_MIN', 90);
+  if (isRateLimited(`arb:${getClientIp(req)}`, arbLimit)) {
+    res.status(429).json({
+      success: false,
+      error: 'Too many requests. Retry later.',
     });
     return;
   }
@@ -77,13 +91,21 @@ export default async function handler(
       return;
     }
 
+    // Parse optional filters
+    const excludeOpposed = req.query.excludeOpposed !== 'false'; // default true
+    const minNetSpread = req.query.minNetSpread
+      ? parseFloat(req.query.minNetSpread as string)
+      : 0;
+
     // Get cached arbitrage opportunities (filtered by minSpread)
     let opportunities = await getArbitrage(minSpreadNum);
 
     // Apply additional filters client-side
-    // Note: opportunities are already sorted by spread descending from detectArbitrage()
+    // Note: opportunities are already sorted by net_spread descending from detectArbitrage()
     opportunities = opportunities
       .filter(arb => arb.confidence >= minConfidenceNum)
+      .filter(arb => !excludeOpposed || !arb.is_directionally_opposed)
+      .filter(arb => !minNetSpread || arb.net_spread >= minNetSpread)
       .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
       .slice(0, limitNum);
 
@@ -99,9 +121,11 @@ export default async function handler(
         timestamp: new Date().toISOString(),
         filters: {
           minSpread: minSpreadNum,
+          minNetSpread: minNetSpread || null,
           minConfidence: minConfidenceNum,
           limit: limitNum,
           category: category || null,
+          excludeOpposed,
         },
         metadata: {
           processing_time_ms: Date.now() - startTime,

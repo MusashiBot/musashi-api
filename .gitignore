@@ -7,3 +7,8 @@ node_modules
 dist
 .tmp
 coverage
+reports/
+BACKTEST_REPORT.md
+src/ml/models/*.json
+!src/ml/models/.gitkeep
+!src/ml/models/README.md

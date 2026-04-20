@@ -7,9 +7,22 @@
     "dev": "node --import tsx scripts/local-api-server.ts",
     "local:api": "node --import tsx scripts/local-api-server.ts",
     "backend:dev": "node server/api-server.mjs",
+    "test:unit": "node --import tsx --test tests/unit/*.test.mjs",
+    "test:api": "node --import tsx --test tests/api/*.test.mjs",
     "test:agent": "node --import tsx --test scripts/test-agent-api.ts",
     "test:agent:local": "MUSASHI_API_BASE_URL=http://127.0.0.1:3000 node --import tsx --test scripts/test-agent-api.ts",
     "test:wallet": "node --import tsx --test tests/wallet-endpoints.test.mjs",
+    "test:smoke": "node --import tsx --test scripts/test-smoke-imports.ts",
+    "test:all": "pnpm test:unit && pnpm test:api && pnpm test:wallet && pnpm test:smoke",
+    "test:ci": "pnpm typecheck && pnpm test:unit && pnpm test:api && pnpm test:smoke && pnpm test:wallet",
+    "interview:check": "node --import tsx scripts/interview-ready.ts",
+    "backtest": "node --import tsx scripts/backtest/run-backtest.ts",
+    "backtest:example": "node --import tsx scripts/backtest/example-usage.ts",
+    "ml:generate-data": "node --import tsx src/ml/generate-synthetic-data.ts",
+    "ml:train": "node --import tsx src/ml/train-signal-scorer.ts",
+    "ml:example": "node --import tsx src/ml/example-usage.ts",
+    "collect:resolutions": "node --import tsx scripts/ml/collect-resolutions.ts",
+    "ci:backtest": "mkdir -p reports && BACKTEST_REPORT_PATH=reports/BACKTEST_REPORT.md node --import tsx scripts/backtest/run-backtest.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p api/tsconfig.json",
     "clean": "rm -rf dist .vercel"
   },
@@ -25,10 +38,14 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
     "@vercel/kv": "^3.0.0",
-    "@vercel/node": "^3.0.21"
+    "@vercel/node": "^3.0.21",
+    "@xenova/transformers": "^2.17.2",
+    "onnxruntime-node": "^1.24.3",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.5.2"
   },

@@ -9,6 +9,16 @@ import { fetchPolymarkets } from '../../src/api/polymarket-client';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
 import { FreshnessMetadata, SourceStatus } from './types';
+import {
+  getWebSocketPrices,
+  isWebSocketConnected,
+  getWebSocketOrderBook,
+  OrderBookSnapshot,
+} from '../../src/api/polymarket-websocket-client';
+import {
+  fetchOrderBookDepth,
+  OrderBookDepth,
+} from '../../src/api/polymarket-price-poller';
 
 // In-memory cache for markets
 // Default: 20 seconds (configurable via MARKET_CACHE_TTL_SECONDS env var)
@@ -72,6 +82,7 @@ function withTimeout<T>(
  * Fetch and cache markets from both platforms
  * Shared across all API endpoints to avoid duplicate fetches
  * Stage 0: Tracks per-source timestamps and errors for freshness metadata
+ * Stage 1: Integrates WebSocket for real-time Polymarket prices
  */
 export async function getMarkets(): Promise<Market[]> {
   const now = Date.now();
@@ -79,7 +90,10 @@ export async function getMarkets(): Promise<Market[]> {
   // Return cached if fresh
   if (cachedMarkets.length > 0 && (now - cacheTimestamp) < CACHE_TTL_MS) {
     console.log(`[Market Cache] Using cached ${cachedMarkets.length} markets (TTL: ${CACHE_TTL_MS}ms, age: ${now - cacheTimestamp}ms)`);
-    return cachedMarkets;
+    
+    // Update Polymarket prices from WebSocket if available
+    const marketsWithWSPrices = updateMarketsFromWebSocket(cachedMarkets);
+    return marketsWithWSPrices;
   }
 
   // Fetch fresh markets
@@ -127,12 +141,64 @@ export async function getMarkets(): Promise<Market[]> {
     cacheTimestamp = now;
 
     console.log(`[Market Cache] Cached ${cachedMarkets.length} markets (${polyMarkets.length} Poly + ${kalshiMarkets.length} Kalshi)`);
-    return cachedMarkets;
+    
+    // Update prices from WebSocket if available
+    const marketsWithWSPrices = updateMarketsFromWebSocket(cachedMarkets);
+    return marketsWithWSPrices;
   } catch (error) {
     console.error('[Market Cache] Failed to fetch markets:', error);
     // Return stale cache if available
     return cachedMarkets;
   }
+}
+
+/**
+ * Update Polymarket prices from WebSocket if fresh (<5s)
+ * Falls back to REST API prices if WebSocket is unavailable or stale
+ *
+ * @param markets - Markets to update
+ * @returns Markets with updated prices from WebSocket (where available)
+ */
+function updateMarketsFromWebSocket(markets: Market[]): Market[] {
+  if (!isWebSocketConnected()) {
+    return markets; // WebSocket not available, return as-is
+  }
+
+  const polymarketMarkets = markets.filter(m => m.platform === 'polymarket' && m.numericId);
+  if (polymarketMarkets.length === 0) {
+    return markets;
+  }
+
+  // Get WebSocket prices for all Polymarket markets
+  const tokenIds = polymarketMarkets.map(m => m.numericId!);
+  const wsPrices = getWebSocketPrices(tokenIds);
+
+  if (wsPrices.size === 0) {
+    return markets; // No fresh WebSocket prices
+  }
+
+  // Update markets with WebSocket prices
+  const updatedMarkets = markets.map(market => {
+    if (market.platform !== 'polymarket' || !market.numericId) {
+      return market;
+    }
+
+    const wsPrice = wsPrices.get(market.numericId);
+    if (wsPrice === undefined) {
+      return market; // No WebSocket price, keep REST price
+    }
+
+    return {
+      ...market,
+      yesPrice: parseFloat(wsPrice.toFixed(2)),
+      noPrice: parseFloat((1 - wsPrice).toFixed(2)),
+      lastUpdated: new Date().toISOString(),
+    };
+  });
+
+  console.log(`[Market Cache] Updated ${wsPrices.size}/${polymarketMarkets.length} Polymarket prices from WebSocket`);
+
+  return updatedMarkets;
 }
 
 /**
@@ -197,7 +263,7 @@ export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageO
   if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
     console.log('[Arbitrage Cache] Computing arbitrage opportunities...');
     // Cache with low threshold (0.01) so we can filter client-side
-    cachedArbitrage = detectArbitrage(markets, 0.01);
+    cachedArbitrage = await detectArbitrage(markets, 0.01);
     arbCacheTimestamp = now;
     console.log(`[Arbitrage Cache] Cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
   }
@@ -207,4 +273,52 @@ export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageO
   console.log(`[Arbitrage Cache] Returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
 
   return filtered;
+}
+
+/**
+ * Get order book for a specific market
+ * Prefers WebSocket data if fresh (<5s), falls back to REST API
+ *
+ * @param marketId - Market ID from cached markets
+ * @returns OrderBookDepth with bid/ask spread or null if not available
+ */
+export async function getOrderBookForMarket(marketId: string): Promise<OrderBookDepth | null> {
+  // Find market in cache
+  const market = cachedMarkets.find(m => m.id === marketId);
+
+  if (!market) {
+    console.warn(`[Market Cache] Market not found: ${marketId}`);
+    return null;
+  }
+
+  if (market.platform !== 'polymarket' || !market.numericId) {
+    console.warn(`[Market Cache] Order book only available for Polymarket markets with numericId`);
+    return null;
+  }
+
+  const tokenId = market.numericId;
+
+  // Try WebSocket first (prefer if fresh <5s)
+  if (isWebSocketConnected()) {
+    const wsOrderBook = getWebSocketOrderBook(tokenId, 5000);
+    if (wsOrderBook) {
+      console.log(`[Market Cache] Returning WebSocket order book for ${marketId}`);
+      return {
+        tokenId,
+        bid: wsOrderBook.bid,
+        ask: wsOrderBook.ask,
+        spread: wsOrderBook.spread,
+        spreadBps: wsOrderBook.spread * 10000,
+        bidSize: 0, // WebSocket doesn't provide size
+        askSize: 0,
+        midPrice: wsOrderBook.price,
+        timestamp: wsOrderBook.timestamp,
+        lastUpdated: wsOrderBook.lastUpdated.toISOString(),
+      };
+    }
+  }
+
+  // Fall back to REST API
+  console.log(`[Market Cache] Fetching order book from REST API for ${marketId}`);
+  return fetchOrderBookDepth(tokenId);
 }

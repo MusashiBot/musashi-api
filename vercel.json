@@ -32,6 +32,38 @@
     {
       "source": "/api/feed/accounts",
       "destination": "/api/feed/accounts.ts"
+    },
+    {
+      "source": "/api/risk/session",
+      "destination": "/api/risk/session.ts"
+    },
+    {
+      "source": "/api/metrics/performance",
+      "destination": "/api/metrics/performance.ts"
+    },
+    {
+      "source": "/api/internal/resolve-market",
+      "destination": "/api/internal/resolve-market.ts"
+    },
+    {
+      "source": "/api/markets/smart-money",
+      "destination": "/api/markets/smart-money.ts"
+    },
+    {
+      "source": "/api/markets/wallet-flow",
+      "destination": "/api/markets/wallet-flow.ts"
+    },
+    {
+      "source": "/api/wallet/activity",
+      "destination": "/api/wallet/activity.ts"
+    },
+    {
+      "source": "/api/wallet/positions",
+      "destination": "/api/wallet/positions.ts"
+    },
+    {
+      "source": "/api/cron/collect-tweets",
+      "destination": "/api/cron/collect-tweets.ts"
     }
   ],
   "crons": [
@@ -58,7 +90,7 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization"
+          "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, X-API-Key"
         }
       ]
     }

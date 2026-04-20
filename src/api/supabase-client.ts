@@ -4,6 +4,7 @@ export const TABLES = {
   accounts: 'user_accounts',
   pluginUsage: 'plugin_usage_records',
   subscriptions: 'orders_subscriptions',
+  signalOutcomes: 'signal_outcomes',
 } as const;
 
 export type AppDatabase = {
@@ -102,6 +103,62 @@ export type AppDatabase = {
           updated_at?: string;
         };
       };
+      signal_outcomes: {
+        Row: {
+          signal_id: string;
+          event_id: string;
+          market_id: string;
+          platform: 'polymarket' | 'kalshi';
+          predicted_direction: 'YES' | 'NO' | 'HOLD';
+          predicted_prob: number;
+          confidence: number;
+          edge: number;
+          signal_type: string;
+          urgency: string;
+          features: Record<string, unknown>;
+          created_at: string;
+          resolution_date: string | null;
+          outcome: 'YES' | 'NO' | null;
+          was_correct: boolean | null;
+          pnl: number | null;
+        };
+        Insert: {
+          signal_id?: string;
+          event_id: string;
+          market_id: string;
+          platform: 'polymarket' | 'kalshi';
+          predicted_direction: 'YES' | 'NO' | 'HOLD';
+          predicted_prob: number;
+          confidence: number;
+          edge: number;
+          signal_type: string;
+          urgency: string;
+          features: Record<string, unknown>;
+          created_at?: string;
+          resolution_date?: string | null;
+          outcome?: 'YES' | 'NO' | null;
+          was_correct?: boolean | null;
+          pnl?: number | null;
+        };
+        Update: {
+          signal_id?: string;
+          event_id?: string;
+          market_id?: string;
+          platform?: 'polymarket' | 'kalshi';
+          predicted_direction?: 'YES' | 'NO' | 'HOLD';
+          predicted_prob?: number;
+          confidence?: number;
+          edge?: number;
+          signal_type?: string;
+          urgency?: string;
+          features?: Record<string, unknown>;
+          created_at?: string;
+          resolution_date?: string | null;
+          outcome?: 'YES' | 'NO' | null;
+          was_correct?: boolean | null;
+          pnl?: number | null;
+        };
+      };
     };
   };
 };
@@ -118,13 +175,14 @@ export function createSupabaseBrowserClient(
 }
 
 export async function testSupabaseConnection(client: SupabaseClient<AppDatabase>): Promise<void> {
-  const [accountsResult, usageResult, subscriptionsResult] = await Promise.all([
+  const [accountsResult, usageResult, subscriptionsResult, signalOutcomesResult] = await Promise.all([
     client.from(TABLES.accounts).select('id').limit(1),
     client.from(TABLES.pluginUsage).select('id').limit(1),
     client.from(TABLES.subscriptions).select('id').limit(1),
+    client.from(TABLES.signalOutcomes).select('signal_id').limit(1),
   ]);
 
-  const errors = [accountsResult.error, usageResult.error, subscriptionsResult.error].filter(Boolean);
+  const errors = [accountsResult.error, usageResult.error, subscriptionsResult.error, signalOutcomesResult.error].filter(Boolean);
 
   if (errors.length > 0) {
     const details = errors.map((error) => error?.message ?? 'Unknown Supabase error').join(' | ');

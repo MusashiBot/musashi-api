@@ -1,8 +1,24 @@
-// Signal Generator - Converts matched markets into actionable trading signals
-// Computes edge, urgency, signal_type, and suggested_action for bot developers
+// Signal Generator — converts matched markets into actionable trading signals.
+//
+// Improvements over legacy rule-based system:
+//   • Kelly Criterion position sizing with volatility regime scaling
+//   • valid_until_seconds: downstream bots know exactly when this signal expires
+//   • is_near_resolution: allows bots to apply urgency/time-decay pressure
+//   • Weighted sentiment (multi-tweet) support via aggregateWeightedSentiment
+//   • More nuanced urgency: proximity-to-resolution factor
+//
+// All additions are backward-compatible — new fields are purely additive.
 
-import { Market, MarketMatch, ArbitrageOpportunity } from '../types/market';
+import { Market, MarketMatch, ArbitrageOpportunity, PositionSize } from '../types/market';
 import { analyzeSentiment, SentimentResult } from './sentiment-analyzer';
+import { kellySizing, VolatilityRegime } from './kelly-sizing';
+import { logSignal } from '../db/signal-outcomes';
+import {
+  predictSignalQuality,
+  SignalFeatures,
+  SignalQualityPrediction,
+  isModelAvailable,
+} from '../ml/signal-scorer-model';
 
 export type SignalType = 'arbitrage' | 'news_event' | 'sentiment_shift' | 'user_interest';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -10,175 +26,138 @@ export type Direction = 'YES' | 'NO' | 'HOLD';
 
 export interface SuggestedAction {
   direction: Direction;
-  confidence: number; // 0-1
-  edge: number; // Expected profit edge
+  confidence: number;        // 0-1
+  edge: number;              // Expected profit edge
   reasoning: string;
+  position_size: PositionSize; // Kelly-sized position recommendation
 }
 
 export interface TradingSignal {
-  event_id: string; // Unique ID for this event/tweet
+  event_id: string;
   signal_type: SignalType;
   urgency: UrgencyLevel;
   matches: MarketMatch[];
   suggested_action?: SuggestedAction;
   sentiment?: SentimentResult;
   arbitrage?: ArbitrageOpportunity;
+  // ── New fields ───────────────────────────────────────────────────────────
+  valid_until_seconds: number;  // How many seconds this signal remains valid
+  is_near_resolution: boolean;  // True if top market resolves within 7 days
+  ml_score?: {
+    probability: number;      // ML model's predicted probability of success (0-1)
+    confidence: number;       // Model confidence in the prediction (0-1)
+    source: 'ml_model' | 'heuristic';
+    model_version?: string;
+  };
+  /** When MUSASHI_ML_SHADOW=1 and use_ml_scorer is false: ML prediction without changing rule-based action. */
+  ml_score_shadow?: SignalQualityPrediction;
   metadata: {
     processing_time_ms: number;
     tweet_text?: string;
   };
 }
 
-/**
- * Check if tweet contains breaking news keywords
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function isBreakingNews(text: string): boolean {
   const breakingKeywords = [
-    'breaking',
-    'just in',
-    'announced',
-    'confirmed',
-    'official',
-    'reports',
-    'alert',
-    'urgent',
-    'developing',
+    'breaking', 'just in', 'announced', 'confirmed', 'official',
+    'reports', 'alert', 'urgent', 'developing',
   ];
-
-  const lowerText = text.toLowerCase();
-  return breakingKeywords.some(kw => lowerText.includes(kw));
+  const lower = text.toLowerCase();
+  return breakingKeywords.some(kw => lower.includes(kw));
 }
 
-/**
- * Calculate implied probability from sentiment
- * Bullish sentiment implies higher YES probability
- * Bearish sentiment implies lower YES probability (higher NO)
- */
 function calculateImpliedProbability(sentiment: SentimentResult): number {
-  if (sentiment.sentiment === 'neutral') {
-    return 0.5; // No directional bias
-  }
-
+  if (sentiment.sentiment === 'neutral') return 0.5;
   if (sentiment.sentiment === 'bullish') {
-    // Bullish: high confidence = higher YES probability
-    return 0.5 + (sentiment.confidence * 0.4); // Range: 0.5 to 0.9
+    return 0.5 + sentiment.confidence * 0.4; // 0.5 → 0.9
   }
-
-  // Bearish: high confidence = lower YES probability
-  return 0.5 - (sentiment.confidence * 0.4); // Range: 0.1 to 0.5
+  return 0.5 - sentiment.confidence * 0.4;   // 0.1 → 0.5
 }
 
-/**
- * Calculate trading edge for a market given sentiment
- * Edge = how much the sentiment-implied probability differs from market price
- */
 function calculateEdge(market: Market, sentiment: SentimentResult): number {
   const impliedProb = calculateImpliedProbability(sentiment);
-  const currentPrice = market.yesPrice;
-
-  // Raw difference between implied and actual price
-  const priceDiff = Math.abs(impliedProb - currentPrice);
-
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
-
-  return edge;
+  return sentiment.confidence * Math.abs(impliedProb - market.yesPrice);
 }
 
-/**
- * Check if market expires soon (within 7 days)
- */
+function daysUntilExpiry(market: Market): number | null {
+  if (!market.endDate) return null;
+  const days = (new Date(market.endDate).getTime() - Date.now()) / 86_400_000;
+  return days > 0 ? days : 0;
+}
+
 function expiresSoon(market: Market): boolean {
-  if (!market.endDate) return false;
-
-  const endDate = new Date(market.endDate);
-  const now = new Date();
-  const daysUntilExpiry = (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-
-  return daysUntilExpiry <= 7 && daysUntilExpiry > 0;
+  const days = daysUntilExpiry(market);
+  return days !== null && days <= 7;
 }
 
 /**
- * Compute urgency level based on edge, volume, and expiry
+ * How long (seconds) this signal should be considered valid.
+ * Breaking news signals expire fast; long-horizon signals last longer.
  */
+function computeValidUntilSeconds(
+  signalType: SignalType,
+  urgency: UrgencyLevel,
+  market: Market
+): number {
+  const days = daysUntilExpiry(market);
+
+  if (signalType === 'news_event' || urgency === 'critical') return 300;   // 5 min
+  if (urgency === 'high') return 600;                                       // 10 min
+  if (days !== null && days <= 1) return 1800;                              // 30 min (same-day)
+  if (urgency === 'medium') return 3600;                                    // 1 hour
+  return 7200;                                                              // 2 hours
+}
+
 function computeUrgency(
   edge: number,
   market: Market,
   hasArbitrage: boolean,
-  arbitrageSpread?: number
+  arbitrageNetSpread?: number
 ): UrgencyLevel {
-  // Critical: Strong edge + high volume + expires soon
-  // OR very high arbitrage spread
-  if (hasArbitrage && arbitrageSpread && arbitrageSpread > 0.05) {
-    return 'critical';
-  }
+  const nearRes = expiresSoon(market);
 
-  if (edge > 0.15 && market.volume24h > 500000 && expiresSoon(market)) {
-    return 'critical';
-  }
+  if (hasArbitrage && arbitrageNetSpread && arbitrageNetSpread > 0.05) return 'critical';
+  if (edge > 0.15 && market.volume24h > 500_000 && nearRes) return 'critical';
 
-  // High: Good edge OR moderate arbitrage
-  if (edge > 0.10) {
-    return 'high';
-  }
+  if (edge > 0.10) return 'high';
+  if (hasArbitrage && arbitrageNetSpread && arbitrageNetSpread > 0.03) return 'high';
 
-  if (hasArbitrage && arbitrageSpread && arbitrageSpread > 0.03) {
-    return 'high';
-  }
+  // Boost urgency one level if market resolves very soon (≤24h)
+  const days = daysUntilExpiry(market);
+  if (days !== null && days <= 1 && edge > 0.05) return 'high';
 
-  // Medium: Decent edge
-  if (edge > 0.05) {
-    return 'medium';
-  }
-
-  // Low: Match found but no clear edge
+  if (edge > 0.05) return 'medium';
   return 'low';
 }
 
-/**
- * Determine signal type based on context
- */
 function computeSignalType(
-  tweetText: string,
+  text: string,
   sentiment: SentimentResult,
   edge: number,
   hasArbitrage: boolean
 ): SignalType {
-  // Arbitrage takes precedence
-  if (hasArbitrage) {
-    return 'arbitrage';
-  }
-
-  // Breaking news
-  if (isBreakingNews(tweetText)) {
-    return 'news_event';
-  }
-
-  // Sentiment strongly disagrees with market (high edge)
-  if (edge > 0.10 && sentiment.sentiment !== 'neutral') {
-    return 'sentiment_shift';
-  }
-
-  // Default: just a match without strong signal
+  if (hasArbitrage) return 'arbitrage';
+  if (isBreakingNews(text)) return 'news_event';
+  if (edge > 0.10 && sentiment.sentiment !== 'neutral') return 'sentiment_shift';
   return 'user_interest';
 }
 
-/**
- * Generate suggested trading action
- */
 function generateSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
   edge: number,
-  urgency: UrgencyLevel
+  urgency: UrgencyLevel,
+  volRegime: VolatilityRegime = 'normal'
 ): SuggestedAction {
-  // Don't suggest action if edge is too low
   if (edge < 0.10) {
     return {
       direction: 'HOLD',
       confidence: 0,
       edge: 0,
       reasoning: 'Insufficient edge to justify a trade',
+      position_size: kellySizing(0, 0.5, market.yesPrice, volRegime),
     };
   }
 
@@ -190,107 +169,127 @@ function generateSuggestedAction(
 
   if (sentiment.sentiment === 'neutral') {
     direction = 'HOLD';
-    reasoning = 'Neutral sentiment, no clear directional bias';
+    reasoning = 'Neutral sentiment — no directional bias';
   } else if (sentiment.sentiment === 'bullish') {
-    // Bullish sentiment
     if (impliedProb > currentPrice) {
-      // YES is underpriced
       direction = 'YES';
-      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
+      reasoning = `Bullish (${(sentiment.confidence * 100).toFixed(0)}% conf) — YES underpriced at ${(currentPrice * 100).toFixed(0)}¢`;
     } else {
       direction = 'HOLD';
-      reasoning = 'Bullish sentiment but YES already priced high';
+      reasoning = 'Bullish sentiment but YES already fully priced';
     }
   } else {
-    // Bearish sentiment
     if (impliedProb < currentPrice) {
-      // YES is overpriced, buy NO
       direction = 'NO';
-      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
+      reasoning = `Bearish (${(sentiment.confidence * 100).toFixed(0)}% conf) — YES overpriced at ${(currentPrice * 100).toFixed(0)}¢`;
     } else {
       direction = 'HOLD';
       reasoning = 'Bearish sentiment but YES already priced low';
     }
   }
 
-  // Confidence based on edge and urgency
+  // Confidence scales with urgency
   let actionConfidence = edge;
   if (urgency === 'critical') actionConfidence = Math.min(edge * 1.5, 0.95);
-  else if (urgency === 'high') actionConfidence = Math.min(edge * 1.2, 0.9);
+  else if (urgency === 'high') actionConfidence = Math.min(edge * 1.2, 0.90);
 
+  // Kelly sizing uses the model confidence and current market price
+  const positionSize = kellySizing(edge, actionConfidence, currentPrice, volRegime);
+
+  return { direction, confidence: actionConfidence, edge, reasoning, position_size: positionSize };
+}
+
+function generateEventId(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return `evt_${Math.abs(hash).toString(36)}`;
+}
+
+function buildMlFeatureVector(
+  sentiment: SentimentResult,
+  topMatch: MarketMatch,
+  matches: MarketMatch[],
+  arbitrageOpportunity: ArbitrageOpportunity | undefined,
+  suggested_action: SuggestedAction,
+  signal_type: SignalType,
+  urgency: UrgencyLevel,
+  isNearRes: boolean,
+  edge: number,
+  startTime: number
+): SignalFeatures {
+  const topMarket = topMatch.market;
   return {
-    direction,
-    confidence: actionConfidence,
+    sentiment_confidence: sentiment.confidence,
+    yes_price: topMarket.yesPrice,
+    volume_24h: topMarket.volume24h,
+    match_confidence: topMatch.confidence,
+    num_matches: matches.length,
     edge,
-    reasoning,
+    one_day_price_change: topMarket.oneDayPriceChange ?? 0,
+    is_anomalous: topMarket.is_anomalous ?? false,
+    is_near_resolution: isNearRes,
+    has_arbitrage: !!arbitrageOpportunity,
+    arbitrage_spread: arbitrageOpportunity?.spread ?? 0,
+    kelly_fraction: suggested_action.position_size.fraction,
+    processing_time_ms: Date.now() - startTime,
+    sentiment: sentiment.sentiment,
+    signal_type,
+    urgency,
   };
 }
 
-/**
- * Generate event ID from tweet text (deterministic hash)
- * Same text will always produce the same event ID for deduplication
- */
-function generateEventId(tweetText: string): string {
-  // Simple hash function for deterministic IDs
-  let hash = 0;
-  for (let i = 0; i < tweetText.length; i++) {
-    const char = tweetText.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  const hashStr = Math.abs(hash).toString(36);
-  return `evt_${hashStr}`;
-}
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Generate a trading signal from matched markets and tweet text
+ * Generate a trading signal from tweet text and matched markets.
+ *
+ * @param tweetText           The raw tweet / news text
+ * @param matches             Markets matched by KeywordMatcher
+ * @param arbitrageOpportunity  Optional cross-platform arb pairing
+ * @param volRegime           Volatility regime for Kelly scaling (default: 'normal')
+ * @param options             Optional configuration
+ * @param options.use_ml_scorer  If true, use ML model to adjust confidence (default: false)
  */
 export function generateSignal(
   tweetText: string,
   matches: MarketMatch[],
-  arbitrageOpportunity?: ArbitrageOpportunity
+  arbitrageOpportunity?: ArbitrageOpportunity,
+  volRegime: VolatilityRegime = 'normal',
+  options?: { use_ml_scorer?: boolean }
 ): TradingSignal {
   const startTime = Date.now();
 
-  // If no matches, return minimal signal
   if (matches.length === 0) {
     return {
       event_id: generateEventId(tweetText),
       signal_type: 'user_interest',
       urgency: 'low',
       matches: [],
-      metadata: {
-        processing_time_ms: Date.now() - startTime,
-        tweet_text: tweetText,
-      },
+      valid_until_seconds: 7200,
+      is_near_resolution: false,
+      metadata: { processing_time_ms: Date.now() - startTime, tweet_text: tweetText },
     };
   }
 
-  // Analyze tweet sentiment
   const sentiment = analyzeSentiment(tweetText);
-
-  // Use the top match (highest confidence) for signal computation
   const topMatch = matches[0];
   const topMarket = topMatch.market;
 
-  // Calculate edge
   const edge = calculateEdge(topMarket, sentiment);
 
-  // Compute urgency
-  const urgency = computeUrgency(
-    edge,
-    topMarket,
-    !!arbitrageOpportunity,
-    arbitrageOpportunity?.spread
-  );
-
-  // Determine signal type
+  // Use net_spread for urgency so liquidity cost is baked in
+  const arbNetSpread = arbitrageOpportunity?.net_spread ?? arbitrageOpportunity?.spread;
+  const urgency = computeUrgency(edge, topMarket, !!arbitrageOpportunity, arbNetSpread);
   const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
+  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency, volRegime);
 
-  // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
+  const isNearRes = expiresSoon(topMarket);
+  const valid_until_seconds = computeValidUntilSeconds(signal_type, urgency, topMarket);
 
-  return {
+  const signal: TradingSignal = {
     event_id: generateEventId(tweetText),
     signal_type,
     urgency,
@@ -298,18 +297,89 @@ export function generateSignal(
     suggested_action,
     sentiment,
     arbitrage: arbitrageOpportunity,
-    metadata: {
-      processing_time_ms: Date.now() - startTime,
-      tweet_text: tweetText,
-    },
+    valid_until_seconds,
+    is_near_resolution: isNearRes,
+    metadata: { processing_time_ms: Date.now() - startTime, tweet_text: tweetText },
   };
+
+  // ── ML-based confidence adjustment ────────────────────────────────────────
+  // If ML scorer is enabled and available, use it to refine the signal confidence.
+  // The ML model predicts the probability that this signal will be correct based on
+  // historical performance of similar signals.
+  if (options?.use_ml_scorer && suggested_action && isModelAvailable()) {
+    try {
+      const mlFeatures = buildMlFeatureVector(
+        sentiment,
+        topMatch,
+        matches,
+        arbitrageOpportunity,
+        suggested_action,
+        signal_type,
+        urgency,
+        isNearRes,
+        edge,
+        startTime
+      );
+
+      const mlPrediction = predictSignalQuality(mlFeatures);
+      signal.ml_score = mlPrediction;
+
+      // Adjust action confidence based on ML prediction
+      // Blend rule-based confidence with ML prediction (70% ML, 30% rule-based)
+      const originalConfidence = suggested_action.confidence;
+      const blendedConfidence = mlPrediction.probability * 0.7 + originalConfidence * 0.3;
+      
+      suggested_action.confidence = blendedConfidence;
+      suggested_action.reasoning += ` [ML-adjusted: ${(mlPrediction.probability * 100).toFixed(0)}% success probability]`;
+      
+      // Recalculate position size with adjusted confidence
+      suggested_action.position_size = kellySizing(edge, blendedConfidence, topMarket.yesPrice, volRegime);
+    } catch (err) {
+      // ML scoring failed - continue with rule-based confidence
+      console.warn('[generateSignal] ML scoring failed:', err);
+    }
+  } else if (
+    process.env.MUSASHI_ML_SHADOW === '1' &&
+    !options?.use_ml_scorer &&
+    suggested_action &&
+    isModelAvailable()
+  ) {
+    try {
+      const mlFeatures = buildMlFeatureVector(
+        sentiment,
+        topMatch,
+        matches,
+        arbitrageOpportunity,
+        suggested_action,
+        signal_type,
+        urgency,
+        isNearRes,
+        edge,
+        startTime
+      );
+      signal.ml_score_shadow = predictSignalQuality(mlFeatures);
+    } catch (err) {
+      console.warn('[generateSignal] ML shadow scoring failed:', err);
+    }
+  }
+
+  // ── Log signal for ML training (async, non-blocking) ──────────────────────
+  // Extract all features used in signal generation for future model training.
+  // This runs asynchronously and does not block the API response.
+  if (typeof window === 'undefined') {
+    // Only log on server-side (not in browser)
+    logSignal(signal).catch(err => {
+      console.error('[generateSignal] Failed to log signal for ML training:', err);
+    });
+  }
+
+  return signal;
 }
 
-/**
- * Batch generate signals for multiple tweets
- */
+/** Batch generate signals for multiple tweets */
 export function batchGenerateSignals(
-  tweets: { text: string; matches: MarketMatch[] }[]
+  tweets: { text: string; matches: MarketMatch[] }[],
+  options?: { use_ml_scorer?: boolean }
 ): TradingSignal[] {
-  return tweets.map(tweet => generateSignal(tweet.text, tweet.matches));
+  return tweets.map(t => generateSignal(t.text, t.matches, undefined, 'normal', options));
 }

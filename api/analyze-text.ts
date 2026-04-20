@@ -2,22 +2,18 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { VolatilityRegime } from '../src/analysis/kelly-sizing';
+import {
+  getClientIp,
+  isRateLimited,
+  parsePositiveIntEnv,
+} from './lib/rate-limit';
 
 function isMalformedJsonError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  if (error instanceof SyntaxError) {
-    return true;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes('json') ||
-    message.includes('unexpected token') ||
-    message.includes('request body')
-  );
+  if (!(error instanceof Error)) return false;
+  if (error instanceof SyntaxError) return true;
+  const msg = error.message.toLowerCase();
+  return msg.includes('json') || msg.includes('unexpected token') || msg.includes('request body');
 }
 
 export default async function handler(
@@ -29,13 +25,11 @@ export default async function handler(
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Only accept POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     res.status(405).json({
@@ -48,6 +42,18 @@ export default async function handler(
     return;
   }
 
+  const analyzeLimit = parsePositiveIntEnv('MUSASHI_ANALYZE_TEXT_RATE_LIMIT_PER_MIN', 120);
+  if (isRateLimited(`analyze:${getClientIp(req)}`, analyzeLimit)) {
+    res.status(429).json({
+      event_id: 'evt_error',
+      signal_type: 'user_interest',
+      urgency: 'low',
+      success: false,
+      error: 'Too many requests. Retry later.',
+    });
+    return;
+  }
+
   const startTime = Date.now();
 
   try {
@@ -55,6 +61,8 @@ export default async function handler(
       text: string;
       minConfidence?: number;
       maxResults?: number;
+      vol_regime?: VolatilityRegime;
+      use_ml_scorer?: boolean;
     } | null;
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -68,7 +76,6 @@ export default async function handler(
       return;
     }
 
-    // Validate request
     if (!body.text || typeof body.text !== 'string') {
       res.status(400).json({
         event_id: 'evt_error',
@@ -80,8 +87,7 @@ export default async function handler(
       return;
     }
 
-    // Validate text length (prevent abuse)
-    if (body.text.length > 10000) {
+    if (body.text.length > 10_000) {
       res.status(400).json({
         event_id: 'evt_error',
         signal_type: 'user_interest',
@@ -93,8 +99,12 @@ export default async function handler(
     }
 
     const { text, minConfidence = 0.3, maxResults = 5 } = body;
+    const useMlScorer = body.use_ml_scorer === true;
 
-    // Validate numeric parameters
+    // Optional volatility regime hint from caller (e.g. from their own regime detector)
+    const volRegime: VolatilityRegime =
+      body.vol_regime === 'low' || body.vol_regime === 'high' ? body.vol_regime : 'normal';
+
     if (
       typeof minConfidence !== 'number' ||
       !Number.isFinite(minConfidence) ||
@@ -127,7 +137,17 @@ export default async function handler(
       return;
     }
 
-    // Get markets
+    if (body.use_ml_scorer !== undefined && typeof body.use_ml_scorer !== 'boolean') {
+      res.status(400).json({
+        event_id: 'evt_error',
+        signal_type: 'user_interest',
+        urgency: 'low',
+        success: false,
+        error: 'use_ml_scorer must be a boolean when provided.',
+      });
+      return;
+    }
+
     const markets = await getMarkets();
 
     if (markets.length === 0) {
@@ -141,28 +161,28 @@ export default async function handler(
       return;
     }
 
-    // Match markets
     const matcher = new KeywordMatcher(markets, minConfidence, maxResults);
     const matches = matcher.match(text);
 
-    // Get cached arbitrage opportunities
+    // Filter out anomalous markets from arbitrage consideration
     const arbitrageOpportunities = await getArbitrage(0.03);
     let arbitrageForSignal = undefined;
 
     if (matches.length > 0 && arbitrageOpportunities.length > 0) {
       const topMatchId = matches[0].market.id;
       arbitrageForSignal = arbitrageOpportunities.find(
-        arb => arb.polymarket.id === topMatchId || arb.kalshi.id === topMatchId
+        arb =>
+          (arb.polymarket.id === topMatchId || arb.kalshi.id === topMatchId) &&
+          !arb.is_directionally_opposed // Skip false positives
       );
     }
 
-    // Generate trading signal
-    const signal: TradingSignal = generateSignal(text, matches, arbitrageForSignal);
+    const signal: TradingSignal = generateSignal(text, matches, arbitrageForSignal, volRegime, {
+      use_ml_scorer: useMlScorer,
+    });
 
-    // Stage 0: Get freshness metadata
     const freshnessMetadata = getMarketMetadata();
 
-    // Build response
     const response = {
       event_id: signal.event_id,
       signal_type: signal.signal_type,
@@ -175,12 +195,18 @@ export default async function handler(
         suggested_action: signal.suggested_action,
         sentiment: signal.sentiment,
         arbitrage: signal.arbitrage,
+        // ── New fields ──────────────────────────────────────────────────
+        valid_until_seconds: signal.valid_until_seconds,
+        is_near_resolution: signal.is_near_resolution,
+        vol_regime: volRegime,
+        use_ml_scorer: useMlScorer,
+        ml_score: signal.ml_score,
+        ml_score_shadow: signal.ml_score_shadow,
         metadata: {
           processing_time_ms: Date.now() - startTime,
-          sources_checked: 2, // Polymarket + Kalshi
+          sources_checked: 2,
           markets_analyzed: markets.length,
-          model_version: 'v2.0.0',
-          // Stage 0: Freshness metadata
+          model_version: 'v3.0.0',
           data_age_seconds: freshnessMetadata.data_age_seconds,
           fetched_at: freshnessMetadata.fetched_at,
           sources: freshnessMetadata.sources,
