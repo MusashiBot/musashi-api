@@ -16,6 +16,19 @@ let cachedMarkets: Market[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = (parseInt(process.env.MARKET_CACHE_TTL_SECONDS || '20', 10)) * 1000;
 
+// ─── Stale-while-revalidate ───────────────────────────────────────────────
+// Beyond the hard TTL we will still *serve* stale data for up to
+// `STALE_WHILE_REVALIDATE_MS` milliseconds while kicking off a single
+// background refresh. This keeps p50 latency near the in-memory cost even
+// right at the TTL boundary, and prevents thundering-herd on expiry.
+const STALE_WHILE_REVALIDATE_MS =
+  (parseInt(process.env.MARKET_CACHE_SWR_SECONDS || '60', 10)) * 1000;
+
+// In-flight request deduplication. If multiple concurrent callers arrive
+// during a cache miss, they all await the same promise instead of each
+// triggering their own Polymarket/Kalshi fetch.
+let inFlightFetch: Promise<Market[]> | null = null;
+
 // Stage 0: Per-source tracking for freshness metadata
 let polyTimestamp = 0;
 let kalshiTimestamp = 0;
@@ -28,6 +41,12 @@ let kalshiError: string | null = null;
 // Default: 15 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
 let cachedArbitrage: ArbitrageOpportunity[] = [];
 let arbCacheTimestamp = 0;
+// `cacheTimestamp` value that was current when `cachedArbitrage` was
+// computed. If it diverges from the live `cacheTimestamp`, the arb cache
+// is stale regardless of its own TTL because the underlying markets have
+// been refreshed. Initialized to -1 as a sentinel for "never computed"
+// so an empty result from detectArbitrage is still considered cached.
+let arbCacheMarketsStamp = -1;
 const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '15', 10)) * 1000;
 
 const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
@@ -69,70 +88,119 @@ function withTimeout<T>(
 }
 
 /**
- * Fetch and cache markets from both platforms
- * Shared across all API endpoints to avoid duplicate fetches
- * Stage 0: Tracks per-source timestamps and errors for freshness metadata
+ * Fetch and cache markets from both platforms.
+ *
+ * Caching strategy (in order of preference per request):
+ *   1. **Hot cache** — within `CACHE_TTL_MS`, return cached data instantly.
+ *   2. **Stale-while-revalidate** — if cache age is beyond TTL but inside
+ *      `STALE_WHILE_REVALIDATE_MS`, return stale data immediately AND
+ *      kick off a single background refresh so the next caller gets
+ *      fresh data. Keeps p50 latency near the in-memory cost even at
+ *      TTL expiry.
+ *   3. **In-flight deduplication** — when multiple concurrent callers
+ *      arrive during a hard miss, they all await the same promise
+ *      instead of each triggering their own Polymarket/Kalshi fetch.
+ *   4. **Graceful degradation** — on fetch failure we return whatever
+ *      is still in memory rather than propagating the error.
  */
 export async function getMarkets(): Promise<Market[]> {
   const now = Date.now();
+  const ageMs = now - cacheTimestamp;
 
-  // Return cached if fresh
-  if (cachedMarkets.length > 0 && (now - cacheTimestamp) < CACHE_TTL_MS) {
-    console.log(`[Market Cache] Using cached ${cachedMarkets.length} markets (TTL: ${CACHE_TTL_MS}ms, age: ${now - cacheTimestamp}ms)`);
+  // 1. Hot cache: within TTL → return immediately.
+  if (cachedMarkets.length > 0 && ageMs < CACHE_TTL_MS) {
+    console.log(`[Market Cache] hot hit: ${cachedMarkets.length} markets (age: ${ageMs}ms, TTL: ${CACHE_TTL_MS}ms)`);
     return cachedMarkets;
   }
 
-  // Fetch fresh markets
-  console.log(`[Market Cache] Fetching fresh markets... (TTL: ${CACHE_TTL_MS}ms)`);
-
-  try {
-    // Stage 0 Session 2: Wrap each source with 5-second timeout
-    const [polyResult, kalshiResult] = await Promise.allSettled([
-      withTimeout(
-        fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Polymarket'
-      ),
-      withTimeout(
-        fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Kalshi'
-      ),
-    ]);
-
-    // Stage 0: Track Polymarket fetch
-    if (polyResult.status === 'fulfilled') {
-      polyTimestamp = now;
-      polyMarketCount = polyResult.value.length;
-      polyError = null;
-    } else {
-      polyError = polyResult.reason?.message || 'Failed to fetch Polymarket markets';
-      console.error('[Market Cache] Polymarket fetch failed:', polyError);
+  // 2. Stale-while-revalidate: beyond TTL but inside SWR window → serve
+  //    stale immediately, background-refresh on fire-and-forget basis.
+  if (
+    cachedMarkets.length > 0 &&
+    ageMs < CACHE_TTL_MS + STALE_WHILE_REVALIDATE_MS
+  ) {
+    if (!inFlightFetch) {
+      console.log(`[Market Cache] SWR hit: age ${ageMs}ms, kicking off background refresh`);
+      // We don't await this — the caller gets stale data, the next caller
+      // gets the refreshed data. `inFlightFetch` is cleared in the finally.
+      void refreshMarkets();
     }
-
-    // Stage 0: Track Kalshi fetch
-    if (kalshiResult.status === 'fulfilled') {
-      kalshiTimestamp = now;
-      kalshiMarketCount = kalshiResult.value.length;
-      kalshiError = null;
-    } else {
-      kalshiError = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
-      console.error('[Market Cache] Kalshi fetch failed:', kalshiError);
-    }
-
-    const polyMarkets = polyResult.status === 'fulfilled' ? polyResult.value : [];
-    const kalshiMarkets = kalshiResult.status === 'fulfilled' ? kalshiResult.value : [];
-
-    cachedMarkets = [...polyMarkets, ...kalshiMarkets];
-    cacheTimestamp = now;
-
-    console.log(`[Market Cache] Cached ${cachedMarkets.length} markets (${polyMarkets.length} Poly + ${kalshiMarkets.length} Kalshi)`);
-    return cachedMarkets;
-  } catch (error) {
-    console.error('[Market Cache] Failed to fetch markets:', error);
-    // Return stale cache if available
     return cachedMarkets;
   }
+
+  // 3. Hard miss — dedupe concurrent callers onto a single in-flight fetch.
+  if (inFlightFetch) {
+    console.log('[Market Cache] hard miss but dedupe hit: awaiting in-flight fetch');
+    return inFlightFetch;
+  }
+
+  console.log(`[Market Cache] hard miss: fetching fresh markets (TTL: ${CACHE_TTL_MS}ms, age: ${ageMs}ms)`);
+  return refreshMarkets();
+}
+
+/**
+ * Refresh the cache. Single-flight: concurrent callers share one promise
+ * via the `inFlightFetch` guard. On any failure we fall back to the last
+ * known good cache; this path should never throw.
+ */
+function refreshMarkets(): Promise<Market[]> {
+  if (inFlightFetch) return inFlightFetch;
+
+  inFlightFetch = (async () => {
+    const now = Date.now();
+    try {
+      const [polyResult, kalshiResult] = await Promise.allSettled([
+        withTimeout(
+          fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
+          SOURCE_TIMEOUT_MS,
+          'Polymarket'
+        ),
+        withTimeout(
+          fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
+          SOURCE_TIMEOUT_MS,
+          'Kalshi'
+        ),
+      ]);
+
+      if (polyResult.status === 'fulfilled') {
+        polyTimestamp = now;
+        polyMarketCount = polyResult.value.length;
+        polyError = null;
+      } else {
+        polyError = polyResult.reason?.message || 'Failed to fetch Polymarket markets';
+        console.error('[Market Cache] Polymarket fetch failed:', polyError);
+      }
+
+      if (kalshiResult.status === 'fulfilled') {
+        kalshiTimestamp = now;
+        kalshiMarketCount = kalshiResult.value.length;
+        kalshiError = null;
+      } else {
+        kalshiError = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
+        console.error('[Market Cache] Kalshi fetch failed:', kalshiError);
+      }
+
+      const polyMarkets = polyResult.status === 'fulfilled' ? polyResult.value : [];
+      const kalshiMarkets = kalshiResult.status === 'fulfilled' ? kalshiResult.value : [];
+
+      // Only overwrite the cache if we actually got *something* — don't
+      // clobber the last known good snapshot with two empties.
+      if (polyMarkets.length + kalshiMarkets.length > 0) {
+        cachedMarkets = [...polyMarkets, ...kalshiMarkets];
+        cacheTimestamp = now;
+      }
+
+      console.log(`[Market Cache] refresh done: ${cachedMarkets.length} markets (${polyMarkets.length} Poly + ${kalshiMarkets.length} Kalshi)`);
+      return cachedMarkets;
+    } catch (error) {
+      console.error('[Market Cache] refresh failed, returning last known good cache:', error);
+      return cachedMarkets;
+    } finally {
+      inFlightFetch = null;
+    }
+  })();
+
+  return inFlightFetch;
 }
 
 /**
@@ -180,31 +248,46 @@ export function getMarketMetadata(): FreshnessMetadata {
 }
 
 /**
- * Get cached arbitrage opportunities
+ * Get cached arbitrage opportunities.
  *
- * Caches with low minSpread (0.01) and filters client-side.
- * This allows different callers to request different thresholds
- * without recomputing the expensive O(n×m) scan.
+ * Caches at a low threshold (0.01) and filters client-side so different
+ * callers can request different `minSpread` thresholds without
+ * recomputing the O(n×m) scan.
+ *
+ * Invalidation rules:
+ *   1. TTL — `ARB_CACHE_TTL_MS` (default 15s).
+ *   2. Markets refresh — if the underlying market-cache timestamp has
+ *      advanced since we last scanned, the cached opportunities are
+ *      stale by definition (they reference a previous snapshot) and
+ *      are recomputed even within their own TTL.
+ *
+ * A separate `arbCacheMarketsStamp` sentinel tracks the markets-cache
+ * timestamp at scan time, which also fixes the edge case where a
+ * legitimate "no opportunities" result would otherwise trigger a fresh
+ * scan on every call (because an empty array was being used as the
+ * "never computed" sentinel).
  *
  * @param minSpread - Minimum spread threshold (default: 0.03)
- * @returns Arbitrage opportunities filtered by minSpread
  */
 export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageOpportunity[]> {
   const markets = await getMarkets();
   const now = Date.now();
 
-  // Recompute if cache is stale
-  if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
-    console.log('[Arbitrage Cache] Computing arbitrage opportunities...');
-    // Cache with low threshold (0.01) so we can filter client-side
+  const ttlStale = arbCacheMarketsStamp < 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS;
+  const marketsMoved = arbCacheMarketsStamp !== cacheTimestamp;
+
+  if (ttlStale || marketsMoved) {
+    const reason = marketsMoved && !ttlStale
+      ? 'markets refreshed under us'
+      : 'TTL elapsed';
+    console.log(`[Arbitrage Cache] recomputing (${reason})...`);
     cachedArbitrage = detectArbitrage(markets, 0.01);
     arbCacheTimestamp = now;
-    console.log(`[Arbitrage Cache] Cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
+    arbCacheMarketsStamp = cacheTimestamp;
+    console.log(`[Arbitrage Cache] cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
   }
 
-  // Filter cached results by requested minSpread
   const filtered = cachedArbitrage.filter(arb => arb.spread >= minSpread);
-  console.log(`[Arbitrage Cache] Returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
-
+  console.log(`[Arbitrage Cache] returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
   return filtered;
 }

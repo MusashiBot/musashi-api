@@ -3,6 +3,7 @@
 
 import { Market, MarketMatch } from '../types/market';
 import { extractEntities, isEntity, ExtractedEntities } from './entity-extractor';
+import { applyQualityGate, QualityGateOptions } from './match-quality';
 
 // ─── Stop words ──────────────────────────────────────────────────────────────
 
@@ -1025,15 +1026,27 @@ export class KeywordMatcher {
   private markets: Market[];
   private minConfidence: number;
   private maxResults: number;
+  private qualityGate: QualityGateOptions | false;
 
+  /**
+   * @param markets          Pool of markets to match against
+   * @param minConfidence    Confidence floor for candidate matches (pre-gate)
+   * @param maxResults       Upper bound on returned matches
+   * @param qualityGate      Post-match quality gate options; pass `false` to
+   *                         disable entirely (useful for evaluation /
+   *                         backwards-compat tests). Default: on with
+   *                         `applyQualityGate` defaults.
+   */
   constructor(
     markets: Market[] = [],
     minConfidence: number = 0.22, // Raised from 0.12 to reduce false positives
-    maxResults: number = 5
+    maxResults: number = 5,
+    qualityGate: QualityGateOptions | false = {}
   ) {
     this.markets = markets;
     this.minConfidence = minConfidence;
     this.maxResults = maxResults;
+    this.qualityGate = qualityGate;
   }
 
   /**
@@ -1065,7 +1078,15 @@ export class KeywordMatcher {
     }
 
     matches.sort((a, b) => b.confidence - a.confidence);
-    return matches.slice(0, this.maxResults);
+
+    // Post-filter: drop low-liquidity, extreme-priced, or weak-signal
+    // candidates before truncating to `maxResults`. Keeps the top-K slots
+    // filled with actually-tradable markets instead of junk.
+    const filtered = this.qualityGate === false
+      ? matches
+      : applyQualityGate(matches, this.qualityGate).kept;
+
+    return filtered.slice(0, this.maxResults);
   }
 
   /**

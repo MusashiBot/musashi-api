@@ -1,0 +1,33 @@
+{
+  "before": {
+    "totalTweets": 30,
+    "totalMatches": 99,
+    "matchesPerTweet": 3.3,
+    "junkRate": 0.6363636363636364,
+    "crossDomainRate": 0.29292929292929293,
+    "thinMarketRate": 0.04040404040404041,
+    "extremePriceRate": 0.46464646464646464,
+    "weakSignalRate": 0.04040404040404041,
+    "junkCount": 63,
+    "crossDomainCount": 29,
+    "thinMarketCount": 4,
+    "extremePriceCount": 46,
+    "weakSignalCount": 4
+  },
+  "after": {
+    "totalTweets": 30,
+    "totalMatches": 86,
+    "matchesPerTweet": 2.8666666666666667,
+    "junkRate": 0.4069767441860465,
+    "crossDomainRate": 0.20930232558139536,
+    "thinMarketRate": 0,
+    "extremePriceRate": 0.2558139534883721,
+    "weakSignalRate": 0,
+    "junkCount": 35,
+    "crossDomainCount": 18,
+    "thinMarketCount": 0,
+    "extremePriceCount": 22,
+    "weakSignalCount": 0
+  },
+  "generatedAt": "2026-04-20T21:55:28.978Z"
+}

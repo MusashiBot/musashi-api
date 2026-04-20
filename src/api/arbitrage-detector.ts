@@ -2,6 +2,7 @@
 // Matches equivalent Polymarket/Kalshi contracts and prices covered YES/NO bundles.
 
 import { Market, ArbitrageOpportunity } from '../types/market';
+import { costFraction, getFeeModel } from '../analysis/fees';
 
 const STOP_WORDS = new Set([
   'will', 'the', 'a', 'an', 'in', 'on', 'at', 'by', 'for', 'to', 'of',
@@ -307,6 +308,17 @@ export function detectArbitrage(
 
       if (bestBundle.edge < minSpread) continue;
 
+      const sizing = estimateExecutableSizing(
+        poly,
+        kalshi,
+        bestBundle.yesPlatform,
+        bestBundle.noPlatform,
+        bestBundle.yesPrice,
+        bestBundle.noPrice,
+        bestBundle.edge,
+        feesAndSlippage,
+      );
+
       opportunities.push({
         polymarket: poly,
         kalshi,
@@ -322,6 +334,9 @@ export function detectArbitrage(
         },
         confidence: similarity.confidence,
         matchReason: similarity.reason,
+        maxStake: sizing.maxStake,
+        expectedDollarProfit: sizing.expectedDollarProfit,
+        annualisedReturn: sizing.annualisedReturn,
       });
     }
   }
@@ -362,4 +377,86 @@ export function getTopArbitrage(
   }
 
   return opportunities.slice(0, limit);
+}
+
+// ─── Liquidity-aware sizing ───────────────────────────────────────────────
+//
+// The core detector charges a flat `feesAndSlippage` buffer (default 2%) on
+// every bundle. That keeps the "is this still +EV?" test cheap, but it
+// doesn't tell a bot *how much* it can actually put through. The helper
+// below looks at the thinner leg's 24h volume, estimates additional
+// impact-based slippage via `src/analysis/fees.ts`, and returns:
+//
+//   • maxStake             — dollars we think can clear both legs before
+//                            post-hoc slippage halves the modeled edge
+//   • expectedDollarProfit — modeled edge × maxStake, minus extra impact
+//   • annualisedReturn     — standardised horizon so opportunities with
+//                            different expiries can be compared
+
+function estimateExecutableSizing(
+  poly: Market,
+  kalshi: Market,
+  yesPlatform: 'polymarket' | 'kalshi',
+  noPlatform: 'polymarket' | 'kalshi',
+  yesPrice: number,
+  noPrice: number,
+  modeledEdge: number,
+  baseFeesAndSlippage: number,
+): { maxStake: number; expectedDollarProfit: number; annualisedReturn: number } {
+  const yesLeg = yesPlatform === 'polymarket' ? poly : kalshi;
+  const noLeg = noPlatform === 'polymarket' ? poly : kalshi;
+  const liquidity = Math.max(500, Math.min(yesLeg.volume24h, noLeg.volume24h));
+
+  // Rule of thumb: we're willing to take stake sizes until expected impact
+  // on both legs equals the modeled edge. That prevents us from walking the
+  // book beyond a break-even.
+  let maxStake = Math.min(10_000, Math.max(10, liquidity * modeledEdge * 0.5));
+
+  // Refine: compute impact-aware slippage at that stake and clamp if the
+  // refined edge goes negative.
+  const yesCost = costFraction(maxStake, yesLeg.volume24h, yesPrice, getFeeModel(yesPlatform));
+  const noCost = costFraction(maxStake, noLeg.volume24h, noPrice, getFeeModel(noPlatform));
+  const impactDraw = Math.max(0, yesCost * yesPrice + noCost * noPrice - baseFeesAndSlippage);
+  const refinedEdge = modeledEdge - impactDraw;
+  if (refinedEdge <= 0) {
+    maxStake = Math.min(maxStake, 10);
+  }
+
+  // Convert bundle-edge (profit per $1 of payout) to dollar profit per
+  // $1 of outlay. For every $maxStake outlaid, we buy maxStake /
+  // refinedCostPerBundle bundles, each paying $1 at resolution. Profit
+  // per outlay dollar = refinedEdge / refinedCostPerBundle.
+  const safeRefinedEdge = Math.max(0, refinedEdge);
+  const refinedCostPerBundle = Math.max(1e-6, 1 - safeRefinedEdge);
+  const expectedDollarProfit = (safeRefinedEdge / refinedCostPerBundle) * maxStake;
+
+  const daysToExpiry = soonestExpiryDays(poly, kalshi) ?? 30;
+  const annualisedReturn = daysToExpiry > 0 && maxStake > 0
+    ? (expectedDollarProfit / maxStake) * (365 / daysToExpiry)
+    : 0;
+
+  return {
+    maxStake: round2(maxStake),
+    expectedDollarProfit: round2(expectedDollarProfit),
+    annualisedReturn: round4(annualisedReturn),
+  };
+}
+
+function soonestExpiryDays(a: Market, b: Market): number | null {
+  const stamps: number[] = [];
+  for (const m of [a, b]) {
+    if (!m.endDate) continue;
+    const t = new Date(m.endDate).getTime();
+    if (Number.isFinite(t)) stamps.push(t);
+  }
+  if (stamps.length === 0) return null;
+  return Math.max(0, (Math.min(...stamps) - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
+function round2(x: number): number {
+  return Number.isFinite(x) ? Math.round(x * 100) / 100 : 0;
+}
+
+function round4(x: number): number {
+  return Number.isFinite(x) ? Math.round(x * 10_000) / 10_000 : 0;
 }

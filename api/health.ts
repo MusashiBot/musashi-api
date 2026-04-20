@@ -57,7 +57,7 @@ export default async function handler(
       timestamp: new Date().toISOString(),
       uptime_ms: process.uptime() * 1000,
       response_time_ms: Date.now() - startTime,
-      version: '2.0.0',
+      version: '2.1.0',
       services: {
         polymarket: polymarketStatus,
         kalshi: kalshiStatus,
@@ -65,17 +65,37 @@ export default async function handler(
       endpoints: {
         '/api/analyze-text': {
           method: 'POST',
-          description: 'Analyze text and return matching markets with trading signals',
+          description: 'Analyze text and return matching markets with trading signals (EV + Kelly)',
+          status: 'healthy',
+        },
+        '/api/ground-probability': {
+          method: 'POST',
+          description: 'Compare an LLM probability estimate to the market consensus',
+          status: 'healthy',
+        },
+        '/api/position-sizing': {
+          method: 'POST',
+          description: 'Kelly-optimal stake given true_prob, yes_price, bankroll, and liquidity',
+          status: 'healthy',
+        },
+        '/api/risk-assessment': {
+          method: 'POST',
+          description: 'Evaluate a proposed trade: EV, variance, Sharpe, and recommendation',
           status: 'healthy',
         },
         '/api/markets/arbitrage': {
           method: 'GET',
-          description: 'Get cross-platform arbitrage opportunities',
+          description: 'Cross-platform arbitrage opportunities (fee-adjusted, with synthetic arb)',
           status: 'healthy',
         },
         '/api/markets/movers': {
           method: 'GET',
-          description: 'Get markets with significant price changes',
+          description: 'Markets with significant price changes',
+          status: 'healthy',
+        },
+        '/api/markets/smart-money': {
+          method: 'GET',
+          description: 'Markets ranked by smart-wallet flow',
           status: 'healthy',
         },
         '/api/health': {

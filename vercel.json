@@ -10,6 +10,14 @@
       "destination": "/api/ground-probability.ts"
     },
     {
+      "source": "/api/position-sizing",
+      "destination": "/api/position-sizing.ts"
+    },
+    {
+      "source": "/api/risk-assessment",
+      "destination": "/api/risk-assessment.ts"
+    },
+    {
       "source": "/api/markets/arbitrage",
       "destination": "/api/markets/arbitrage.ts"
     },

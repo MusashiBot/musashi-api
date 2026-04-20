@@ -57,6 +57,8 @@ import smartMoneyHandler from '../api/markets/smart-money';
 import marketWalletFlowHandler from '../api/markets/wallet-flow';
 import walletActivityHandler from '../api/wallet/activity';
 import walletPositionsHandler from '../api/wallet/positions';
+import positionSizingHandler from '../api/position-sizing';
+import riskAssessmentHandler from '../api/risk-assessment';
 
 type Handler = (req: any, res: any) => Promise<void> | void;
 type QueryValue = string | string[];
@@ -77,6 +79,8 @@ const ROUTES = new Map<string, Handler>([
   ['/api/markets/wallet-flow', marketWalletFlowHandler],
   ['/api/wallet/activity', walletActivityHandler],
   ['/api/wallet/positions', walletPositionsHandler],
+  ['/api/position-sizing', positionSizingHandler],
+  ['/api/risk-assessment', riskAssessmentHandler],
 ]);
 
 function buildQuery(url: URL): Record<string, QueryValue> {

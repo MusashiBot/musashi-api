@@ -53,8 +53,11 @@ Content-Type: application/json
     "suggested_action": {
       "direction": "YES",              // YES | NO | HOLD
       "confidence": 0.75,
-      "edge": 0.12,
-      "reasoning": "Bullish sentiment (85% confidence) suggests YES is underpriced at 67%"
+      "edge": 0.12,                    // SIGNED net-of-fees edge in price units
+      "ev_per_dollar": 0.18,            // Expected profit per $1 staked, net of fees
+      "kelly_fraction": 0.11,           // Suggested fraction of bankroll (quarter-Kelly cap)
+      "breakeven_prob": 0.68,           // Min P(YES) needed for positive EV at this price
+      "reasoning": "Your estimate 82% vs. market 67% ⇒ YES underpriced at 67%. Net edge 12% after 3% costs; EV/$ = 0.180. Suggested Kelly fraction 11% of bankroll."
     },
     "sentiment": {
       "sentiment": "bullish",          // bullish | bearish | neutral
@@ -102,18 +105,29 @@ Content-Type: application/json
 
 ### 2. GET /api/markets/arbitrage
 
-Get cross-platform arbitrage opportunities between Polymarket and Kalshi.
+Get cross-platform covered-bundle arbitrage opportunities between
+Polymarket and Kalshi.
+
+The detector prices real cross-venue bundles — buy YES on venue A + buy NO
+on venue B — so `spread` is the **net edge after modeled fees + slippage**
+per $1 of payout (not a raw price gap). Each opportunity is also enriched
+with liquidity-aware sizing (`maxStake`, `expectedDollarProfit`,
+`annualisedReturn`) so bots can pre-filter by how much they can actually
+execute at.
 
 **Request:**
 ```
-GET /api/markets/arbitrage?minSpread=0.03&minConfidence=0.5&limit=20&category=crypto
+GET /api/markets/arbitrage?minSpread=0.03&minConfidence=0.5&limit=20&category=crypto&minExpectedProfit=10&minAnnualisedReturn=0.25&minMaxStake=250
 ```
 
 **Query Parameters:**
-- `minSpread` (optional): Minimum price spread (default: 0.03 = 3%)
+- `minSpread` (optional): Minimum net covered-bundle edge (default: 0.03 = 3%)
 - `minConfidence` (optional): Minimum match confidence (default: 0.5 = 50%)
 - `limit` (optional): Max results (default: 20, max: 100)
 - `category` (optional): Filter by category (crypto, us_politics, economics, etc.)
+- `minExpectedProfit` (optional): Minimum `expectedDollarProfit` at `maxStake` (in dollars)
+- `minAnnualisedReturn` (optional): Minimum `annualisedReturn` to resolution (e.g. `0.25` for ≥25% APR)
+- `minMaxStake` (optional): Minimum `maxStake` (in dollars) — filters out opportunities too thin to size
 
 **Response:**
 ```json
@@ -136,9 +150,19 @@ GET /api/markets/arbitrage?minSpread=0.03&minConfidence=0.5&limit=20&category=cr
           "volume24h": 200000,
           ...
         },
-        "spread": 0.07,                // 7% spread
-        "profitPotential": 0.07,       // Expected 7% profit
+        "spread": 0.042,               // Net edge per $1 payout (1 - costPerBundle)
+        "rawPriceGap": 0.07,           // Indicative YES price gap
+        "costPerBundle": 0.958,        // Cost to own both sides (incl. fees/slippage buffer)
+        "feesAndSlippage": 0.02,       // Buffer used in the bundle calc
+        "profitPotential": 0.042,      // Same as spread for covered-bundle arb
+        "maxStake": 1500,              // $ before liquidity slippage erodes edge
+        "expectedDollarProfit": 63,    // Net $ profit at maxStake
+        "annualisedReturn": 0.52,      // APR to resolution
         "direction": "buy_poly_sell_kalshi",
+        "legs": {
+          "yes": { "platform": "polymarket", "price": 0.63 },
+          "no":  { "platform": "kalshi",     "price": 0.32 }
+        },
         "confidence": 0.85,
         "matchReason": "High title similarity (85%)"
       }
@@ -255,7 +279,129 @@ GET /api/markets/movers?minChange=0.05&limit=20&category=us_politics
 
 ---
 
-### 4. GET /api/health
+### 4. POST /api/position-sizing
+
+Given a probability estimate, current market price, bankroll, and liquidity,
+returns the **Kelly-optimal stake**, fee-adjusted edge, EV, and
+best/worst-case PnL. This is the canonical "how much should I bet?"
+primitive for trading bots.
+
+**Request:**
+```json
+POST /api/position-sizing
+Content-Type: application/json
+
+{
+  "true_prob": 0.62,
+  "yes_price": 0.50,
+  "bankroll": 10000,
+  "volume_24h": 250000,
+  "platform": "polymarket",      // optional, default "polymarket"
+  "confidence": 0.8,              // optional, shrinks estimate toward market
+  "kelly_cap": 0.25,              // optional, fractional Kelly cap (default 0.25)
+  "max_bankroll_fraction": 0.1,   // optional, hard cap (default 0.1)
+  "fees": {                        // optional overrides
+    "takerFee": 0.02,
+    "fixedCost": 0.0,
+    "spreadCost": 0.005,
+    "impactCoefficient": 0.5
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "side": "YES",
+    "recommended_stake": 820.50,
+    "alternative_sizing": {
+      "half_kelly": 410.25,
+      "quarter_kelly": 205.13,
+      "flat_1pct_bankroll": 100
+    },
+    "kelly_fraction": 0.0821,
+    "edge_raw": 0.12,
+    "edge_net": 0.108,
+    "ev_per_dollar": 0.195,
+    "expected_profit": 160.00,
+    "worst_case_loss": -840.00,
+    "best_case_gain": 820.50,
+    "breakeven_prob": 0.51,
+    "reasoning": "Your estimate 62% vs. market 50% ⇒ YES underpriced at 50%. Net edge 10.8% after 2.0% costs; EV/$ = 0.195. Suggested Kelly fraction 8.2% of bankroll."
+  },
+  "timestamp": "2026-03-01T12:00:00.000Z"
+}
+```
+
+**Why this matters:** Naïve flat-sizing loses money even on winning
+strategies because losers compound faster than winners. Full-Kelly
+maximises log-bankroll but has painful drawdowns, so the endpoint caps at
+quarter-Kelly by default — production desks rarely stake more.
+
+---
+
+### 5. POST /api/risk-assessment
+
+Evaluates a **proposed** trade (you already picked side, price, and stake)
+and returns an opinionated recommendation plus EV / variance / Sharpe /
+worst-case.
+
+**Request:**
+```json
+POST /api/risk-assessment
+Content-Type: application/json
+
+{
+  "side": "YES",
+  "yes_price": 0.42,
+  "stake": 250,
+  "true_prob": 0.55,              // optional, defaults to yes_price
+  "bankroll": 10000,              // optional, used for scale-down checks
+  "volume_24h": 400000,
+  "platform": "polymarket",
+  "confidence": 0.7,               // optional
+  "end_date": "2026-06-01",        // optional, drives time-to-expiry warning
+  "max_bankroll_fraction": 0.1,    // optional
+  "fees": { ... }                  // optional FeeModel override
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "recommendation": "TAKE",        // TAKE | SCALE_DOWN | AVOID
+    "side": "YES",
+    "stake": 250,
+    "expected_value": 44.25,
+    "variance": 43562,
+    "stddev": 208.71,
+    "sharpe": 0.212,
+    "prob_profit": 0.55,
+    "worst_case_loss": -255,
+    "best_case_gain": 345,
+    "ev_per_dollar": 0.177,
+    "edge_net": 0.11,
+    "kelly_suggested_stake": 312.50,
+    "time_to_expiry_days": 92.4,
+    "warnings": [],
+    "reasoning": "TAKE YES: your p=55.0% vs market YES=42.0%. EV/$ = 0.177, single-trade Sharpe = 0.212. Kelly suggests $312.50 vs. your $250.00."
+  },
+  "timestamp": "2026-03-01T12:00:00.000Z"
+}
+```
+
+**Recommendations:**
+- `TAKE`: positive EV, side matches model, stake is within Kelly & bankroll caps.
+- `SCALE_DOWN`: positive EV but stake is > 1.5× Kelly or > bankroll cap.
+- `AVOID`: negative EV, or model disagrees with the chosen side.
+
+---
+
+### 6. GET /api/health
 
 Check API health and service status.
 

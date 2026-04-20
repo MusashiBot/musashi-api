@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { enforceRateLimit } from './lib/rate-limit';
 
 function isMalformedJsonError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -45,6 +46,11 @@ export default async function handler(
       success: false,
       error: 'Method not allowed. Use POST.',
     });
+    return;
+  }
+
+  // Rate-limit: 60 rpm/IP. Fails open if KV is down.
+  if (await enforceRateLimit(req, res, { bucket: 'analyze-text', maxRequests: 60, windowSeconds: 60 })) {
     return;
   }
 
@@ -179,7 +185,8 @@ export default async function handler(
           processing_time_ms: Date.now() - startTime,
           sources_checked: 2, // Polymarket + Kalshi
           markets_analyzed: markets.length,
-          model_version: 'v2.0.0',
+          model_version: 'v2.1.0',
+          implied_true_prob: signal.metadata.implied_true_prob ?? null,
           // Stage 0: Freshness metadata
           data_age_seconds: freshnessMetadata.data_age_seconds,
           fetched_at: freshnessMetadata.fetched_at,

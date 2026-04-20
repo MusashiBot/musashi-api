@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import { enforceRateLimit } from '../lib/rate-limit';
 
 export default async function handler(
   req: VercelRequest,
@@ -26,6 +27,11 @@ export default async function handler(
     return;
   }
 
+  // Arbitrage scan is expensive; hold to 30 rpm/IP.
+  if (await enforceRateLimit(req, res, { bucket: 'markets-arbitrage', maxRequests: 30, windowSeconds: 60 })) {
+    return;
+  }
+
   const startTime = Date.now();
 
   try {
@@ -35,11 +41,20 @@ export default async function handler(
       minConfidence = '0.5',
       limit = '20',
       category,
+      minExpectedProfit,
+      minAnnualisedReturn,
+      minMaxStake,
     } = req.query;
 
     const minSpreadNum = parseFloat(minSpread as string);
     const minConfidenceNum = parseFloat(minConfidence as string);
     const limitNum = parseInt(limit as string, 10);
+    const minExpectedProfitNum =
+      minExpectedProfit === undefined ? 0 : parseFloat(minExpectedProfit as string);
+    const minAnnualisedReturnNum =
+      minAnnualisedReturn === undefined ? 0 : parseFloat(minAnnualisedReturn as string);
+    const minMaxStakeNum =
+      minMaxStake === undefined ? 0 : parseFloat(minMaxStake as string);
 
     // Validate parameters
     if (isNaN(minSpreadNum) || minSpreadNum < 0 || minSpreadNum > 1) {
@@ -66,6 +81,30 @@ export default async function handler(
       return;
     }
 
+    if (!Number.isFinite(minExpectedProfitNum) || minExpectedProfitNum < 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid minExpectedProfit. Must be a non-negative number (dollars).',
+      });
+      return;
+    }
+
+    if (!Number.isFinite(minAnnualisedReturnNum) || minAnnualisedReturnNum < 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid minAnnualisedReturn. Must be a non-negative number (e.g. 0.25 for 25%).',
+      });
+      return;
+    }
+
+    if (!Number.isFinite(minMaxStakeNum) || minMaxStakeNum < 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid minMaxStake. Must be a non-negative number (dollars).',
+      });
+      return;
+    }
+
     // Get markets
     const markets = await getMarkets();
 
@@ -77,14 +116,16 @@ export default async function handler(
       return;
     }
 
-    // Get cached arbitrage opportunities (filtered by minSpread)
+    // Get cached arbitrage opportunities (already filtered by minSpread upstream).
+    // Opportunities are sorted by profitPotential descending from detectArbitrage().
     let opportunities = await getArbitrage(minSpreadNum);
 
-    // Apply additional filters client-side
-    // Note: opportunities are already sorted by spread descending from detectArbitrage()
     opportunities = opportunities
       .filter(arb => arb.confidence >= minConfidenceNum)
       .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
+      .filter(arb => (arb.expectedDollarProfit ?? 0) >= minExpectedProfitNum)
+      .filter(arb => (arb.annualisedReturn ?? 0) >= minAnnualisedReturnNum)
+      .filter(arb => (arb.maxStake ?? 0) >= minMaxStakeNum)
       .slice(0, limitNum);
 
     // Stage 0: Get freshness metadata
@@ -102,6 +143,9 @@ export default async function handler(
           minConfidence: minConfidenceNum,
           limit: limitNum,
           category: category || null,
+          minExpectedProfit: minExpectedProfitNum,
+          minAnnualisedReturn: minAnnualisedReturnNum,
+          minMaxStake: minMaxStakeNum,
         },
         metadata: {
           processing_time_ms: Date.now() - startTime,
