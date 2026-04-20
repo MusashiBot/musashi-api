@@ -1,0 +1,108 @@
+{
+  "corpus": {
+    "tweets": 30,
+    "markets": 1857,
+    "signals": 4
+  },
+  "replications": 500,
+  "headline": {
+    "KELLY": {
+      "totalReturnPct": 0.1744658755739615,
+      "sharpe": 0.36043196281628453,
+      "maxDrawdownPct": 0.035196562750218034,
+      "winRate": 0.1775,
+      "trades": 4,
+      "meanPnl": 436.16468893490276,
+      "stdPnl": 1210.1165654867848,
+      "brier": 0.20626274322490995
+    },
+    "FLAT": {
+      "totalReturnPct": 0.056204351695656324,
+      "sharpe": 0.5702275032812809,
+      "maxDrawdownPct": 0.017411534869675803,
+      "winRate": 0.542,
+      "trades": 4,
+      "meanPnl": 140.51087923914105,
+      "stdPnl": 246.4119644012156,
+      "brier": 0.239065685806228
+    },
+    "RANDOM": {
+      "totalReturnPct": 0.018317739628056166,
+      "sharpe": 0.228416913978894,
+      "maxDrawdownPct": 0.018949250544563687,
+      "winRate": 0.491,
+      "trades": 4,
+      "meanPnl": 45.79434907014083,
+      "stdPnl": 200.4858058557445,
+      "brier": 0.23982950252985752
+    }
+  },
+  "sensitivity": [
+    {
+      "calibration": 0,
+      "metrics": {
+        "totalReturnPct": -0.012200791092705646,
+        "sharpe": -0.03324064257980448,
+        "maxDrawdownPct": 0.08956918382641632,
+        "winRate": 0.0655,
+        "trades": 4,
+        "meanPnl": -30.50197773176413,
+        "stdPnl": 917.6109534746406,
+        "brier": 0.37735768931791497
+      }
+    },
+    {
+      "calibration": 0.25,
+      "metrics": {
+        "totalReturnPct": 0.03696587557396098,
+        "sharpe": 0.09026529795102647,
+        "maxDrawdownPct": 0.07524782381081074,
+        "winRate": 0.095,
+        "trades": 4,
+        "meanPnl": 92.41468893490303,
+        "stdPnl": 1023.8119303061815,
+        "brier": 0.33229250262377547
+      }
+    },
+    {
+      "calibration": 0.5,
+      "metrics": {
+        "totalReturnPct": 0.08279920890729482,
+        "sharpe": 0.18793323177629834,
+        "maxDrawdownPct": 0.061897403457280065,
+        "winRate": 0.1225,
+        "trades": 4,
+        "meanPnl": 206.998022268235,
+        "stdPnl": 1101.444488086226,
+        "brier": 0.290282582824154
+      }
+    },
+    {
+      "calibration": 0.75,
+      "metrics": {
+        "totalReturnPct": 0.13529920890729513,
+        "sharpe": 0.2889951413768627,
+        "maxDrawdownPct": 0.04660510377959908,
+        "winRate": 0.154,
+        "trades": 4,
+        "meanPnl": 338.2480222682361,
+        "stdPnl": 1170.4280586058208,
+        "brier": 0.24216212923549596
+      }
+    },
+    {
+      "calibration": 1,
+      "metrics": {
+        "totalReturnPct": 0.1836325422406279,
+        "sharpe": 0.37688850231655235,
+        "maxDrawdownPct": 0.03252647867951183,
+        "winRate": 0.183,
+        "trades": 4,
+        "meanPnl": 459.0813556015697,
+        "stdPnl": 1218.0826763878904,
+        "brier": 0.19786075926498542
+      }
+    }
+  ],
+  "generatedAt": "2026-04-20T20:00:48.147Z"
+}
