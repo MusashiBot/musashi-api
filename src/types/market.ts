@@ -42,4 +42,21 @@ export interface ArbitrageOpportunity {
   };
   confidence: number; // 0-1, how confident we are this is the same event
   matchReason: string; // Why we think these are the same market
+
+  /**
+   * Max executable dollar stake before liquidity-aware slippage eats the
+   * modeled edge. Computed from 24h volume on the thinner leg; see
+   * `src/analysis/fees.ts` for the model.
+   */
+  maxStake?: number;
+
+  /** Expected dollar profit when executing at `maxStake`. */
+  expectedDollarProfit?: number;
+
+  /**
+   * Annualised return to resolution. Uses the earlier of the two
+   * `endDate`s when available, otherwise a 30-day assumption. Useful for
+   * comparing opportunities with different horizons.
+   */
+  annualisedReturn?: number;
 }
