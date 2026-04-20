@@ -13,7 +13,7 @@
 //      "rate cut" ↔ "reduction", etc.) are normalised before comparison as fallback.
 
 import { Market, ArbitrageOpportunity } from '../types/market';
-import { computeMarketSimilarity } from '../analysis/semantic-matcher';
+import { computeMarketSimilarity, embedMarkets } from '../analysis/semantic-matcher';
 
 // ─── Synonym expansion ────────────────────────────────────────────────────────
 
@@ -148,7 +148,8 @@ function calculateKeywordOverlap(market1: Market, market2: Market): number {
 
 async function areMarketsSimilar(
   poly: Market,
-  kalshi: Market
+  kalshi: Market,
+  semanticEnabled: boolean
 ): Promise<{ isSimilar: boolean; confidence: number; reason: string }> {
   const categoryMatch =
     poly.category === kalshi.category ||
@@ -159,13 +160,11 @@ async function areMarketsSimilar(
     return { isSimilar: false, confidence: 0, reason: 'Different categories' };
   }
 
-  const semanticDisabled = process.env.MUSASHI_DISABLE_SEMANTIC_MATCHING === '1';
-
   // ═══ PRIMARY: Semantic embedding similarity ════════════════════════════════
   // Try semantic matching first - this captures deep semantic relationships
   // that keyword/token methods miss (e.g., "Fed rate cut" ≈ "FOMC reduction").
   // Skip when MUSASHI_DISABLE_SEMANTIC_MATCHING=1 (no transformers/sharp cold path).
-  if (!semanticDisabled) {
+  if (semanticEnabled) {
   try {
     const semanticSim = await computeMarketSimilarity(poly, kalshi);
     
@@ -288,9 +287,23 @@ export async function detectArbitrage(
     `[Arbitrage] Checking ${polymarkets.length} Polymarket × ${kalshiMarkets.length} Kalshi markets`
   );
 
+  // Avoid catastrophic cold-path behavior by making semantic matching opt-in,
+  // then pre-computing embeddings once per scan instead of per-pair inference.
+  const semanticEnabled =
+    process.env.MUSASHI_ENABLE_SEMANTIC_MATCHING === '1' &&
+    process.env.MUSASHI_DISABLE_SEMANTIC_MATCHING !== '1';
+
+  if (semanticEnabled) {
+    try {
+      await embedMarkets(markets);
+    } catch (err) {
+      console.warn('[Arbitrage] Failed to precompute embeddings, falling back to text similarity:', err);
+    }
+  }
+
   for (const poly of polymarkets) {
     for (const kalshi of kalshiMarkets) {
-      const similarity = await areMarketsSimilar(poly, kalshi);
+      const similarity = await areMarketsSimilar(poly, kalshi, semanticEnabled);
       if (!similarity.isSimilar) continue;
 
       const spread = Math.abs(poly.yesPrice - kalshi.yesPrice);

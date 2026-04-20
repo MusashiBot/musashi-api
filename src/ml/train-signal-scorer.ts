@@ -144,6 +144,7 @@ async function loadTrainingData(): Promise<SignalOutcome[]> {
     .select('*')
     .not('resolution_date', 'is', null)
     .not('was_correct', 'is', null)
+    .eq('is_synthetic', false)
     .order('created_at', { ascending: false });
 
   if (error) {

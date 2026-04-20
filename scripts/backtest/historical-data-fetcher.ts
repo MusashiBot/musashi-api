@@ -209,8 +209,8 @@ export function calculatePriceStats(snapshots: PriceSnapshot[]): {
 
   const prices = snapshots.map(s => s.yesPrice);
   const mean = prices.reduce((sum, p) => sum + p, 0) / prices.length;
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
+  const min = prices.reduce((lowest, p) => (p < lowest ? p : lowest), prices[0]);
+  const max = prices.reduce((highest, p) => (p > highest ? p : highest), prices[0]);
   
   // Calculate standard deviation (volatility)
   const variance = prices.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / prices.length;

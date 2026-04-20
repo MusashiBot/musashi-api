@@ -26,7 +26,10 @@ CREATE TABLE IF NOT EXISTS signal_outcomes (
   -- Outcome tracking
   outcome TEXT CHECK (outcome IN ('YES', 'NO')),
   was_correct BOOLEAN,
-  pnl FLOAT
+  pnl FLOAT,
+
+  -- Data provenance
+  is_synthetic BOOLEAN NOT NULL DEFAULT false
 );
 
 -- ─── Indexes for fast queries ────────────────────────────────────────────────
@@ -48,6 +51,7 @@ CREATE INDEX idx_signal_outcomes_unresolved ON signal_outcomes(created_at)
   WHERE resolution_date IS NULL;
 CREATE INDEX idx_signal_outcomes_correctness ON signal_outcomes(was_correct) 
   WHERE was_correct IS NOT NULL;
+CREATE INDEX idx_signal_outcomes_synthetic ON signal_outcomes(is_synthetic);
 
 -- JSONB feature lookups (GIN index for flexible feature queries)
 CREATE INDEX idx_signal_outcomes_features ON signal_outcomes USING GIN (features);

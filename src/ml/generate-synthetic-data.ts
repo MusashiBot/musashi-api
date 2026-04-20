@@ -263,6 +263,7 @@ async function insertSyntheticOutcome(
       outcome,
       was_correct,
       pnl,
+      is_synthetic: true,
     });
 
   if (error) {

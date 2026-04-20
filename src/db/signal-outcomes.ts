@@ -23,6 +23,7 @@ export interface SignalOutcome {
   outcome?: 'YES' | 'NO';
   was_correct?: boolean;
   pnl?: number;
+  is_synthetic?: boolean;
 }
 
 export interface PerformanceMetrics {
@@ -258,6 +259,7 @@ export async function getRecentPerformance(days: number = 30): Promise<Performan
   const { data, error } = await client
     .from('signal_outcomes')
     .select('*')
+    .eq('is_synthetic', false)
     .gte('created_at', cutoffDate.toISOString());
 
   if (error) {

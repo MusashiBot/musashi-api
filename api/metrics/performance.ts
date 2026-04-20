@@ -88,6 +88,7 @@ export default async function handler(
     const { data: allSignals, error: allSignalsError } = await supabase
       .from('signal_outcomes')
       .select('signal_id,signal_type,confidence,was_correct,created_at,outcome,pnl,predicted_direction,platform,market_id')
+      .eq('is_synthetic', false)
       .gte('created_at', day30Ago);
 
     if (allSignalsError) {
