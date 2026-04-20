@@ -200,6 +200,7 @@ function toMarket(km: KalshiMarket): Market {
     category: inferCategory(km.series_ticker || km.event_ticker || km.ticker),
     lastUpdated: new Date().toISOString(),
     endDate: km.close_time,
+    eventTicker: km.event_ticker || undefined,
   };
 }
 

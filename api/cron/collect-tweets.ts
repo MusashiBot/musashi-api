@@ -153,7 +153,7 @@ export default async function handler(
 
         // Generate signal
         const sentiment = analyzeSentiment(rawTweet.text);
-        const signal = generateSignal(rawTweet.text, matches, arbitrage);
+        const signal = generateSignal(rawTweet.text, matches, arbitrage, sentiment, rawTweet.id);
 
         // Build analyzed tweet
         const analyzedTweet: AnalyzedTweet = {
