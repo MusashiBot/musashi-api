@@ -147,6 +147,15 @@ function buildSuggestedAction(
   const direction: Direction = edgeResult.side;
 
   if (direction === 'HOLD' || edgeResult.evPerDollar <= 0) {
+    // When the raw edge favours a side (YES or NO) but costs push the
+    // expected value non-positive, `edgeResult.reasoning` still reads as
+    // "YES underpriced at X%" even though we are overriding to HOLD.
+    // Rewrite the reasoning so the returned payload is internally
+    // consistent.
+    const reasoning = direction === 'HOLD'
+      ? edgeResult.reasoning
+      : `Raw edge favours ${direction} at ${(edgeResult.marketPrice * 100).toFixed(1)}%, ` +
+        `but fees and slippage push EV/$ to ${edgeResult.evPerDollar.toFixed(3)}. HOLD.`;
     return {
       direction: 'HOLD',
       confidence: 0,
@@ -154,7 +163,7 @@ function buildSuggestedAction(
       ev_per_dollar: edgeResult.evPerDollar,
       kelly_fraction: 0,
       breakeven_prob: edgeResult.breakevenProb,
-      reasoning: edgeResult.reasoning,
+      reasoning,
     };
   }
 

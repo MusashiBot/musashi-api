@@ -94,13 +94,18 @@ export function assessRisk(input: RiskInputs): RiskAssessment {
   const stddev = Math.sqrt(variance);
   const sharpe = stddev > 0 ? expectedValue / stddev : 0;
 
-  // For a single binary trade PnL > 0 iff our side wins.
+  // For a single binary trade PnL > 0 iff our side wins. Binary-option
+  // longs on Polymarket and Kalshi cannot lose more than the stake; fees
+  // are already reflected in `evPerDollar`, so the worst-case dollar loss
+  // is bounded at `-stake`.
   const probProfit = winProb;
-  const worstCase = -input.stake * (1 + cost);
-  const bestCase = input.stake * (payoutIfWin - cost);
+  const worstCase = -input.stake;
+  const bestCase = Math.max(0, input.stake * (payoutIfWin - cost));
 
-  // Kelly-suggested stake in dollars. We reuse the edge module and cap at
-  // `maxBankrollFraction` of the bankroll (default 10%).
+  // Kelly-suggested stake in dollars. We reuse the edge module; when the
+  // caller supplies a bankroll the cap is `maxBankrollFraction` of that
+  // value, otherwise we compute a display-only figure and skip the
+  // bankroll-fraction SCALE_DOWN branch below.
   const edge = computeEdge({
     trueProb,
     yesPrice: yes,
@@ -110,7 +115,10 @@ export function assessRisk(input: RiskInputs): RiskAssessment {
     confidence: input.confidence ?? 1,
   });
   const maxFrac = clamp(input.maxBankrollFraction ?? 0.1, 0, 1);
-  const bankroll = input.bankroll && input.bankroll > 0 ? input.bankroll : input.stake / Math.max(maxFrac, 0.01);
+  const bankrollProvided = typeof input.bankroll === 'number' && input.bankroll > 0;
+  const bankroll = bankrollProvided
+    ? (input.bankroll as number)
+    : input.stake / Math.max(maxFrac, 0.01);
   const kellyStake = edge.side === input.side
     ? bankroll * Math.min(edge.kellyFraction, maxFrac)
     : 0;
@@ -121,6 +129,7 @@ export function assessRisk(input: RiskInputs): RiskAssessment {
     evPerDollar,
     stake: input.stake,
     bankroll,
+    bankrollProvided,
     maxFrac,
     timeToExpiryDays,
     volume24h: input.volume24h,
@@ -136,6 +145,7 @@ export function assessRisk(input: RiskInputs): RiskAssessment {
     stake: input.stake,
     kellyStake,
     bankroll,
+    bankrollProvided,
     maxFrac,
   });
 
@@ -179,6 +189,7 @@ function buildWarnings(ctx: {
   evPerDollar: number;
   stake: number;
   bankroll: number;
+  bankrollProvided: boolean;
   maxFrac: number;
   timeToExpiryDays: number | null;
   volume24h: number;
@@ -193,7 +204,9 @@ function buildWarnings(ctx: {
   if (ctx.recommendedSide !== 'HOLD' && ctx.recommendedSide !== ctx.actualSide) {
     w.push(`Model prefers ${ctx.recommendedSide} side; you chose ${ctx.actualSide}.`);
   }
-  if (ctx.bankroll > 0 && ctx.stake / ctx.bankroll > ctx.maxFrac) {
+  if (!ctx.bankrollProvided) {
+    w.push('Bankroll not provided; SCALE_DOWN checks against wealth are skipped. Pass `bankroll` for a full assessment.');
+  } else if (ctx.bankroll > 0 && ctx.stake / ctx.bankroll > ctx.maxFrac) {
     w.push(`Stake is ${((ctx.stake / ctx.bankroll) * 100).toFixed(1)}% of bankroll, above ${(ctx.maxFrac * 100).toFixed(0)}% cap.`);
   }
   if (ctx.volume24h < 5_000) {
@@ -215,12 +228,16 @@ function chooseRecommendation(ctx: {
   stake: number;
   kellyStake: number;
   bankroll: number;
+  bankrollProvided: boolean;
   maxFrac: number;
 }): Recommendation {
   if (ctx.evPerDollar <= 0) return 'AVOID';
   if (ctx.recommendedSide !== 'HOLD' && ctx.recommendedSide !== ctx.side) return 'AVOID';
   if (ctx.kellyStake > 0 && ctx.stake > ctx.kellyStake * 1.5) return 'SCALE_DOWN';
-  if (ctx.bankroll > 0 && ctx.stake / ctx.bankroll > ctx.maxFrac) return 'SCALE_DOWN';
+  // Bankroll-fraction check only fires when the caller supplied a real
+  // bankroll. Without one we cannot meaningfully compare the stake to
+  // wealth, so we defer to the Kelly-vs-stake check above.
+  if (ctx.bankrollProvided && ctx.bankroll > 0 && ctx.stake / ctx.bankroll > ctx.maxFrac) return 'SCALE_DOWN';
   return 'TAKE';
 }
 

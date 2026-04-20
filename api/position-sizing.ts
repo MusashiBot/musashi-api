@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { computeEdge } from '../src/analysis/edge';
+import { computeEdge, kellyFraction } from '../src/analysis/edge';
 import { DEFAULT_FEES, FeeModel, getFeeModel } from '../src/analysis/fees';
 import { enforceRateLimit } from './lib/rate-limit';
 
@@ -135,10 +135,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   });
 
   const rawKelly = refined.kellyFraction;
-  const kellyFraction = Math.min(rawKelly, maxFrac);
-  const recommendedStake = Math.max(0, body.bankroll * kellyFraction);
-  const halfKelly = recommendedStake / 2;
-  const quarterKelly = recommendedStake / 4;
+  const kellyFractionCapped = Math.min(rawKelly, maxFrac);
+  const recommendedStake = Math.max(0, body.bankroll * kellyFractionCapped);
+
+  // Half-Kelly and quarter-Kelly are computed against the uncapped full
+  // Kelly fraction so the names match what practitioners expect. Each
+  // result is still bounded by the outer risk limits (`kelly_cap` and
+  // `max_bankroll_fraction`) so these "safer" sizings can never exceed
+  // the recommended stake or the caller's hard risk cap.
+  const shrunkProbForAlt = confidence * body.true_prob + (1 - confidence) * body.yes_price;
+  const fullKellyAbs = refined.side === 'HOLD' ? 0 : Math.abs(kellyFraction(shrunkProbForAlt, body.yes_price));
+  const outerCap = Math.min(kellyCap, maxFrac);
+  const halfKellyStake = Math.max(0, body.bankroll * Math.min(fullKellyAbs * 0.5, outerCap));
+  const quarterKellyStake = Math.max(0, body.bankroll * Math.min(fullKellyAbs * 0.25, outerCap));
 
   const expectedProfit = recommendedStake * refined.evPerDollar;
   const worstCase = -recommendedStake * refined.worstCaseLoss;
@@ -155,11 +164,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       side: refined.side,
       recommended_stake: round(recommendedStake),
       alternative_sizing: {
-        half_kelly: round(halfKelly),
-        quarter_kelly: round(quarterKelly),
+        half_kelly: round(halfKellyStake),
+        quarter_kelly: round(quarterKellyStake),
         flat_1pct_bankroll: round(body.bankroll * 0.01),
       },
-      kelly_fraction: round(kellyFraction, 4),
+      full_kelly_fraction: round(fullKellyAbs, 4),
+      kelly_fraction: round(kellyFractionCapped, 4),
       edge_raw: round(refined.edgeRaw, 4),
       edge_net: round(refined.edgeNet, 4),
       ev_per_dollar: round(refined.evPerDollar, 4),
