@@ -41,6 +41,12 @@ let kalshiError: string | null = null;
 // Default: 15 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
 let cachedArbitrage: ArbitrageOpportunity[] = [];
 let arbCacheTimestamp = 0;
+// `cacheTimestamp` value that was current when `cachedArbitrage` was
+// computed. If it diverges from the live `cacheTimestamp`, the arb cache
+// is stale regardless of its own TTL because the underlying markets have
+// been refreshed. Initialized to -1 as a sentinel for "never computed"
+// so an empty result from detectArbitrage is still considered cached.
+let arbCacheMarketsStamp = -1;
 const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '15', 10)) * 1000;
 
 const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
@@ -242,31 +248,46 @@ export function getMarketMetadata(): FreshnessMetadata {
 }
 
 /**
- * Get cached arbitrage opportunities
+ * Get cached arbitrage opportunities.
  *
- * Caches with low minSpread (0.01) and filters client-side.
- * This allows different callers to request different thresholds
- * without recomputing the expensive O(n×m) scan.
+ * Caches at a low threshold (0.01) and filters client-side so different
+ * callers can request different `minSpread` thresholds without
+ * recomputing the O(n×m) scan.
+ *
+ * Invalidation rules:
+ *   1. TTL — `ARB_CACHE_TTL_MS` (default 15s).
+ *   2. Markets refresh — if the underlying market-cache timestamp has
+ *      advanced since we last scanned, the cached opportunities are
+ *      stale by definition (they reference a previous snapshot) and
+ *      are recomputed even within their own TTL.
+ *
+ * A separate `arbCacheMarketsStamp` sentinel tracks the markets-cache
+ * timestamp at scan time, which also fixes the edge case where a
+ * legitimate "no opportunities" result would otherwise trigger a fresh
+ * scan on every call (because an empty array was being used as the
+ * "never computed" sentinel).
  *
  * @param minSpread - Minimum spread threshold (default: 0.03)
- * @returns Arbitrage opportunities filtered by minSpread
  */
 export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageOpportunity[]> {
   const markets = await getMarkets();
   const now = Date.now();
 
-  // Recompute if cache is stale
-  if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
-    console.log('[Arbitrage Cache] Computing arbitrage opportunities...');
-    // Cache with low threshold (0.01) so we can filter client-side
+  const ttlStale = arbCacheMarketsStamp < 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS;
+  const marketsMoved = arbCacheMarketsStamp !== cacheTimestamp;
+
+  if (ttlStale || marketsMoved) {
+    const reason = marketsMoved && !ttlStale
+      ? 'markets refreshed under us'
+      : 'TTL elapsed';
+    console.log(`[Arbitrage Cache] recomputing (${reason})...`);
     cachedArbitrage = detectArbitrage(markets, 0.01);
     arbCacheTimestamp = now;
-    console.log(`[Arbitrage Cache] Cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
+    arbCacheMarketsStamp = cacheTimestamp;
+    console.log(`[Arbitrage Cache] cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
   }
 
-  // Filter cached results by requested minSpread
   const filtered = cachedArbitrage.filter(arb => arb.spread >= minSpread);
-  console.log(`[Arbitrage Cache] Returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
-
+  console.log(`[Arbitrage Cache] returning ${filtered.length}/${cachedArbitrage.length} opportunities (minSpread: ${minSpread})`);
   return filtered;
 }
