@@ -179,7 +179,8 @@ export default async function handler(
           processing_time_ms: Date.now() - startTime,
           sources_checked: 2, // Polymarket + Kalshi
           markets_analyzed: markets.length,
-          model_version: 'v2.0.0',
+          model_version: 'v2.1.0',
+          implied_true_prob: signal.metadata.implied_true_prob ?? null,
           // Stage 0: Freshness metadata
           data_age_seconds: freshnessMetadata.data_age_seconds,
           fetched_at: freshnessMetadata.fetched_at,
