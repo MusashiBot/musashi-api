@@ -35,6 +35,10 @@ function calculatePnL(
   wasCorrect: boolean,
   bankroll: number = 1000 // Default bankroll
 ): number {
+  // NOTE: This formula assumes entry at the predicted probability (fair odds),
+  // NOT the actual market price at time of trade. If the market price diverges
+  // significantly from predictedProb, P&L will be misstated. For accurate
+  // accounting, the fill price must be recorded at signal generation time.
   // Kelly Criterion: f* = (bp - q) / b
   // where b = decimal odds - 1, p = win probability, q = 1 - p
   // Simplified: bet size = edge * bankroll (fraction Kelly)

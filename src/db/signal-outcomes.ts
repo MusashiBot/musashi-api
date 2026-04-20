@@ -107,7 +107,9 @@ export async function logSignal(
     valid_until_seconds: signal.valid_until_seconds,
     is_near_resolution: signal.is_near_resolution,
     processing_time_ms: signal.metadata.processing_time_ms,
-    tweet_text: signal.metadata.tweet_text,
+    tweet_text: signal.metadata.tweet_text
+      ? signal.metadata.tweet_text.slice(0, 280)
+      : undefined,
     
     // Arbitrage features (if present)
     has_arbitrage: !!signal.arbitrage,
@@ -258,7 +260,11 @@ export async function getRecentPerformance(days: number = 30): Promise<Performan
 
   const { data, error } = await client
     .from('signal_outcomes')
-    .select('*')
+    .select(
+      'signal_id, event_id, market_id, platform, predicted_direction, predicted_prob, ' +
+      'confidence, edge, signal_type, urgency, created_at, resolution_date, outcome, ' +
+      'was_correct, pnl, is_synthetic'
+    )
     .eq('is_synthetic', false)
     .gte('created_at', cutoffDate.toISOString());
 

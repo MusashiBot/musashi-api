@@ -12,6 +12,13 @@ The backtesting framework consists of five main modules:
 4. **`pnl-calculator.ts`** - Calculates profit/loss with platform-specific fees
 5. **`metrics-reporter.ts`** - Generates comprehensive performance reports
 
+## P&L Assumption
+
+The backtest P&L formula (`calculatePnL`) computes returns at **fair odds** based on the
+model's predicted probability, not the actual market fill price. In a live setting the
+entry price can diverge significantly from `predicted_prob`. Interpret backtest Sharpe
+and P&L figures accordingly — they represent an upper bound on achievable returns.
+
 ## Quick Start
 
 ### Prerequisites

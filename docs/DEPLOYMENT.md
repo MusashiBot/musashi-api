@@ -27,7 +27,9 @@ Configure in **Project → Settings → Environment Variables** (Production + Pr
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - Optional: `SUPABASE_SERVICE_KEY` (only if you run batch jobs against the same project — lock down RLS policies)
-- Optional: `INTERNAL_API_KEY` for `/api/internal/resolve-market`
+- Optional: `INTERNAL_API_KEY` for `/api/internal/resolve-market` and `/api/risk/session`
+- Optional: `MUSASHI_ML_ENABLED=true` to activate ML-based confidence adjustment (only after ≥200 real resolved signals exist)
+- Optional: `RISK_RATE_LIMIT` per-IP requests/min for `/api/risk/session` (default: 30)
 - Optional: `KV_REST_API_URL`, `KV_REST_API_TOKEN` for persistent movers history
 - Optional feature flags — see [ENVIRONMENT.md](./ENVIRONMENT.md)
 

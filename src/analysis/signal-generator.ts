@@ -20,6 +20,13 @@ import {
   isModelAvailable,
 } from '../ml/signal-scorer-model';
 
+// Gate: refuse ML-based scoring unless this env var is explicitly "true".
+// Prevents circular-prior contamination from synthetic-only training data.
+// See src/ml/README.md § WARNING: Circular ML Priors for details.
+function isMLEnabledByOperator(): boolean {
+  return process.env.MUSASHI_ML_ENABLED === 'true';
+}
+
 export type SignalType = 'arbitrage' | 'news_event' | 'sentiment_shift' | 'user_interest';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
 export type Direction = 'YES' | 'NO' | 'HOLD';
@@ -199,13 +206,8 @@ function generateSuggestedAction(
   return { direction, confidence: actionConfidence, edge, reasoning, position_size: positionSize };
 }
 
-function generateEventId(text: string): string {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = ((hash << 5) - hash) + text.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return `evt_${Math.abs(hash).toString(36)}`;
+function generateEventId(_text: string): string {
+  return crypto.randomUUID();
 }
 
 function buildMlFeatureVector(
@@ -306,7 +308,7 @@ export function generateSignal(
   // If ML scorer is enabled and available, use it to refine the signal confidence.
   // The ML model predicts the probability that this signal will be correct based on
   // historical performance of similar signals.
-  if (options?.use_ml_scorer && suggested_action && isModelAvailable()) {
+  if (options?.use_ml_scorer && suggested_action && isModelAvailable() && isMLEnabledByOperator()) {
     try {
       const mlFeatures = buildMlFeatureVector(
         sentiment,

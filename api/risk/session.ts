@@ -21,6 +21,18 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { isRateLimited, getClientIp, parsePositiveIntEnv } from '../lib/rate-limit';
+
+// ─── Auth ──────────────────────────────────────────────────────────────────────
+
+function isAuthorized(req: VercelRequest): boolean {
+  const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+  const expectedKey = process.env.INTERNAL_API_KEY;
+  if (!expectedKey) return false;
+  return apiKey === expectedKey;
+}
+
+const RISK_RATE_LIMIT = parsePositiveIntEnv('RISK_RATE_LIMIT', 30);
 
 // ─── Thresholds ───────────────────────────────────────────────────────────────
 
@@ -116,12 +128,30 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
+    return;
+  }
+
+  // Auth check
+  if (!isAuthorized(req)) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized. Provide valid X-API-Key header.',
+    });
+    return;
+  }
+
+  // Rate limiting
+  const clientIp = getClientIp(req);
+  if (isRateLimited(`risk:${clientIp}`, RISK_RATE_LIMIT)) {
+    res.status(429).json({
+      success: false,
+      error: 'Rate limit exceeded. Try again later.',
+    });
     return;
   }
 
