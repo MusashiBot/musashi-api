@@ -422,7 +422,13 @@ function estimateExecutableSizing(
     maxStake = Math.min(maxStake, 10);
   }
 
-  const expectedDollarProfit = Math.max(0, refinedEdge) * maxStake;
+  // Convert bundle-edge (profit per $1 of payout) to dollar profit per
+  // $1 of outlay. For every $maxStake outlaid, we buy maxStake /
+  // refinedCostPerBundle bundles, each paying $1 at resolution. Profit
+  // per outlay dollar = refinedEdge / refinedCostPerBundle.
+  const safeRefinedEdge = Math.max(0, refinedEdge);
+  const refinedCostPerBundle = Math.max(1e-6, 1 - safeRefinedEdge);
+  const expectedDollarProfit = (safeRefinedEdge / refinedCostPerBundle) * maxStake;
 
   const daysToExpiry = soonestExpiryDays(poly, kalshi) ?? 30;
   const annualisedReturn = daysToExpiry > 0 && maxStake > 0

@@ -292,8 +292,9 @@ export function analyzeSentiment(text: string): SentimentResult {
  * *negative* score on "Will BTC crash?" is bullish YES (the crash is what
  * the market is *asking about*).
  *
- * We flip the sign if the market title contains any bearish keyword — i.e.
- * the market is framed around a bad outcome, so confirming it is YES.
+ * We flip the sign if the market title contains any bearish keyword as a
+ * whole-token match — "fall" triggers on "will Tesla fall" but not on
+ * "Falcons roster", "red" triggers on "red wave" but not on "redux".
  */
 export function analyzeSentimentForMarket(
   text: string,
@@ -303,13 +304,31 @@ export function analyzeSentimentForMarket(
   if (base.sentiment === 'neutral') return base;
 
   const titleLower = marketTitle.toLowerCase();
-  const titleHasNegative = Object.keys(BEARISH_LEXICON).some(k =>
-    titleLower.includes(k) && !Object.keys(BULLISH_LEXICON).some(b => titleLower.includes(b) && b.length > k.length),
-  );
+  const bearishHit = findKeyAsWord(titleLower, Object.keys(BEARISH_LEXICON));
+  if (!bearishHit) return base;
+  // If a longer bullish phrase also matches, the bearish hit may be
+  // inside it (e.g. "soft landing" contains "fail" — hypothetically).
+  // Prefer the longer match.
+  const bullishHit = findKeyAsWord(titleLower, Object.keys(BULLISH_LEXICON));
+  if (bullishHit && bullishHit.length > bearishHit.length) return base;
 
-  if (!titleHasNegative) return base;
-
-  // Flip polarity: confirming a bearish event is bullish for YES.
   const flipped: Sentiment = base.sentiment === 'bullish' ? 'bearish' : 'bullish';
   return { ...base, sentiment: flipped, score: -base.score };
+}
+
+/**
+ * Return the first key from `keys` that appears in `haystack` as a
+ * whole-token match (word boundaries on both sides). Returns the
+ * matched key, or `undefined` if none match. Keys containing spaces
+ * match across whitespace in the haystack (phrase-level match).
+ */
+function findKeyAsWord(haystack: string, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // `\b` at both ends for unigrams; for phrases containing spaces
+    // the interior spaces match any run of whitespace.
+    const pattern = escaped.replace(/ /g, '\\s+');
+    if (new RegExp(`\\b${pattern}\\b`).test(haystack)) return key;
+  }
+  return undefined;
 }

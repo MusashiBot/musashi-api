@@ -185,8 +185,16 @@ export function computeEdge(input: EdgeInputs): EdgeResult {
     evPerDollar,
     kellyFraction: side === 'HOLD' ? 0 : kelly,
     breakevenProb: clamp(breakevenProb, 0, 1),
-    worstCaseLoss: side === 'HOLD' ? 0 : 1 + cost, // you lose stake + costs
-    bestCaseGain: side === 'HOLD' ? 0 : payoutIfWin - cost,
+    // worst case: we lose the stake. Fees are accounted for in `cost`
+    // (and therefore in `evPerDollar`); they are not an extra loss on
+    // top of the stake because in both Polymarket and Kalshi the stake
+    // is the total at risk. Reporting `1 + cost` here caused
+    // user-facing confusion about losing more than 100% of stake.
+    worstCaseLoss: side === 'HOLD' ? 0 : 1,
+    // best case: we win and keep `payoutIfWin` dollars per $1 staked,
+    // minus the fees that didn't go into shares. This matches the
+    // expected-value accounting used above.
+    bestCaseGain: side === 'HOLD' ? 0 : Math.max(0, payoutIfWin - cost),
     reasoning,
   };
 }
