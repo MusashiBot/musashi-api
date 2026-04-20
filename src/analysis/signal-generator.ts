@@ -212,6 +212,36 @@ export function generateSignal(
   const topMarket = topMatch.market;
 
   const sentiment = analyzeSentimentForMarket(tweetText, topMarket.title);
+
+  // Neutral sentiment means we have no directional evidence. The legacy
+  // behaviour was to set trueProb = 0.5 and let computeEdge pick whichever
+  // side was cheapest — which amounts to betting against the market price
+  // using a hardcoded 50/50 prior. That's a false signal. If there's no
+  // arbitrage to dominate, defer to the market and return HOLD.
+  if (sentiment.sentiment === 'neutral' && !arbitrageOpportunity) {
+    return {
+      event_id: generateEventId(tweetText),
+      signal_type: 'user_interest',
+      urgency: 'low',
+      matches,
+      suggested_action: {
+        direction: 'HOLD',
+        confidence: 0,
+        edge: 0,
+        ev_per_dollar: 0,
+        kelly_fraction: 0,
+        breakeven_prob: topMarket.yesPrice,
+        reasoning: 'Sentiment provides no directional evidence; deferring to the market.',
+      },
+      sentiment,
+      metadata: {
+        processing_time_ms: Date.now() - startTime,
+        tweet_text: tweetText,
+        implied_true_prob: topMarket.yesPrice,
+      },
+    };
+  }
+
   const trueProb = sentimentToProbability(sentiment);
 
   // Use shared edge / Kelly math so arbitrage and position-sizing agree.
