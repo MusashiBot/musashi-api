@@ -20,12 +20,10 @@ interface ResolveMarketResponse {
 function isAuthorized(req: VercelRequest): boolean {
   const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
   const expectedKey = process.env.INTERNAL_API_KEY;
-  
+
+  // Fail closed: internal API key must be explicitly configured.
   if (!expectedKey) {
-    // If no key is configured, check if request is from internal network
-    const allowedIps = (process.env.INTERNAL_IPS || '').split(',');
-    const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
-    return allowedIps.some(ip => clientIp.toString().includes(ip));
+    return false;
   }
   
   return apiKey === expectedKey;
@@ -58,18 +56,8 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST, OPTIONS');
+    res.setHeader('Allow', 'POST');
     res.status(405).json({
       success: false,
       error: 'Method not allowed. Use POST.',
@@ -115,7 +103,7 @@ export default async function handler(
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       res.status(500).json({
@@ -160,13 +148,19 @@ export default async function handler(
 
     // Calculate outcomes for each signal
     const resolutionDate = body.resolution_date || new Date().toISOString();
-    const bankroll = body.bankroll || 1000; // Default $1000 bankroll
+    const bankroll = body.bankroll ?? 1000; // Allow explicit bankroll=0 for dry-run style accounting
+    if (!Number.isFinite(bankroll) || bankroll < 0) {
+      res.status(400).json({
+        success: false,
+        error: 'bankroll must be a non-negative number',
+      });
+      return;
+    }
     let totalPnL = 0;
 
     const updates = typedSignals.map(signal => {
       const predictedDirection = signal.predicted_direction;
-      const wasCorrect = predictedDirection === body.outcome || 
-                        (predictedDirection === 'HOLD' && false); // HOLD is always wrong in binary outcome
+      const wasCorrect = predictedDirection !== 'HOLD' && predictedDirection === body.outcome;
       
       // Calculate P&L based on Kelly bet sizing with edge
       const pnl = calculatePnL(signal.edge, signal.predicted_prob, wasCorrect, bankroll);
@@ -181,28 +175,17 @@ export default async function handler(
       };
     });
 
-    // Update all signals in batch
-    const updatePromises = updates.map(update => 
-      (supabase
-        .from('signal_outcomes') as any)
-        .update({
-          outcome: update.outcome,
-          was_correct: update.was_correct,
-          resolution_date: update.resolution_date,
-          pnl: update.pnl,
-        })
-        .eq('signal_id', update.signal_id)
-    );
+    // Perform a single batch upsert keyed by signal_id to avoid N round-trips.
+    const { data: upsertedRows, error: upsertError } = await (supabase
+      .from('signal_outcomes') as any)
+      .upsert(updates, { onConflict: 'signal_id' })
+      .select('signal_id');
 
-    const results = await Promise.all(updatePromises);
-
-    // Check for errors
-    const errors = results.filter(r => r.error);
-    if (errors.length > 0) {
-      console.error('[resolve-market] Some updates failed:', errors);
+    if (upsertError) {
+      throw new Error(`Failed to update resolved signals: ${upsertError.message}`);
     }
 
-    const successCount = results.filter(r => !r.error).length;
+    const successCount = Array.isArray(upsertedRows) ? upsertedRows.length : 0;
 
     const response: ResolveMarketResponse = {
       success: true,

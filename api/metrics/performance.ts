@@ -84,10 +84,11 @@ export default async function handler(
     const day7Ago = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const day30Ago = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Fetch all signal outcomes
+    // Fetch only last 30 days and only fields required by this endpoint.
     const { data: allSignals, error: allSignalsError } = await supabase
       .from('signal_outcomes')
-      .select('*');
+      .select('signal_id,signal_type,confidence,was_correct,created_at,outcome,pnl,predicted_direction,platform,market_id')
+      .gte('created_at', day30Ago);
 
     if (allSignalsError) {
       throw new Error(`Failed to fetch signals: ${allSignalsError.message}`);

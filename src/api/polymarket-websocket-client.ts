@@ -363,6 +363,11 @@ let wsClient: PolymarketWebSocketClient | null = null;
 
 /**
  * Get WebSocket client singleton when the feature flag is enabled.
+ *
+ * Note for Vercel/serverless: this singleton only lives for the lifetime of a
+ * single invocation container. Cold starts reset module state, so this improves
+ * latency only for warm invocations and should not be treated as a durable
+ * always-on feed. For durable WS ingestion, run a persistent worker/service.
  */
 function getWSClient(): PolymarketWebSocketClient | null {
   if (!isPolyWebSocketEnabled()) {
