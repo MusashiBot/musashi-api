@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { enforceRateLimit } from './lib/rate-limit';
 
 function isMalformedJsonError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -45,6 +46,11 @@ export default async function handler(
       success: false,
       error: 'Method not allowed. Use POST.',
     });
+    return;
+  }
+
+  // Rate-limit: 60 rpm/IP. Fails open if KV is down.
+  if (await enforceRateLimit(req, res, { bucket: 'analyze-text', maxRequests: 60, windowSeconds: 60 })) {
     return;
   }
 

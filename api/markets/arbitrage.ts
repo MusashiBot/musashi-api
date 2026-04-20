@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import { enforceRateLimit } from '../lib/rate-limit';
 
 export default async function handler(
   req: VercelRequest,
@@ -23,6 +24,11 @@ export default async function handler(
       success: false,
       error: 'Method not allowed. Use GET.',
     });
+    return;
+  }
+
+  // Arbitrage scan is expensive; hold to 30 rpm/IP.
+  if (await enforceRateLimit(req, res, { bucket: 'markets-arbitrage', maxRequests: 30, windowSeconds: 60 })) {
     return;
   }
 

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { assessRisk, Side } from '../src/analysis/risk';
 import { FeeModel, getFeeModel } from '../src/analysis/fees';
+import { enforceRateLimit } from './lib/rate-limit';
 
 /**
  * POST /api/risk-assessment
@@ -58,6 +59,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     res.status(405).json({ success: false, error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  if (await enforceRateLimit(req, res, { bucket: 'risk-assessment', maxRequests: 120, windowSeconds: 60 })) {
     return;
   }
 

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { computeEdge } from '../src/analysis/edge';
 import { DEFAULT_FEES, FeeModel, getFeeModel } from '../src/analysis/fees';
+import { enforceRateLimit } from './lib/rate-limit';
 
 /**
  * POST /api/position-sizing
@@ -53,6 +54,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     res.status(405).json({ success: false, error: 'Method not allowed. Use POST.' });
+    return;
+  }
+
+  if (await enforceRateLimit(req, res, { bucket: 'position-sizing', maxRequests: 120, windowSeconds: 60 })) {
     return;
   }
 
