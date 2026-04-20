@@ -49,6 +49,8 @@ Single reference for runtime configuration. Values are read at process start on 
 |----------|---------|---------|
 | `RISK_CAUTION_THRESHOLD` | `-0.05` | Session P&amp;L fraction triggering **caution** throttle. |
 | `RISK_HALT_THRESHOLD` | `-0.10` | Session P&amp;L fraction triggering **halt**. |
+| `ALLOWED_ORIGIN` | — | Origin allowed via CORS on `/api/risk/session`. **Required in production.** Omit for no CORS header. Set to `*` only in non-production. |
+| `RISK_RATE_LIMIT` | `30` | Per-IP requests/min for `/api/risk/session`. |
 
 ## Rate limiting (application layer)
 
@@ -64,6 +66,8 @@ Per-instance sliding window; use Vercel Firewall / Upstash for global limits at 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MUSASHI_ML_SHADOW` | unset | Set to `1` to compute ML score alongside rule-based signal **without** changing suggested action confidence (comparison for training). |
+| `MUSASHI_ML_ENABLED` | unset | Set to `true` to activate ML-based confidence adjustment in signal generation. Requires `MUSASHI_ML_SHADOW` validation first. |
+| `ML_MIN_REAL_SIGNALS` | `200` | Minimum non-synthetic resolved signals required before ML scorer is trusted. Hard floor of **50** — values below are clamped with a warning. |
 
 ## Resolution collector batch job
 

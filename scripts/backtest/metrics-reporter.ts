@@ -67,7 +67,26 @@ export async function generateReport(
   console.log('[Reporter] Generating backtest report...');
 
   const report: string[] = [];
-  
+
+  const DISCLAIMER = [
+    '> **BACKTEST DISCLAIMER**',
+    '> ',
+    '> P&L and Sharpe figures are computed at **FAIR ODDS** (predicted probability),',
+    '> not actual market fill prices. Live fill prices will diverge. These numbers',
+    '> represent an **UPPER BOUND** on achievable returns. Do not use for live capital sizing.',
+    '',
+    '---',
+    '',
+  ].join('\n');
+
+  // Console disclaimer
+  console.log('');
+  console.log('⚠️  BACKTEST DISCLAIMER');
+  console.log('P&L and Sharpe figures are computed at FAIR ODDS (predicted probability),');
+  console.log('not actual market fill prices. Live fill prices will diverge. These numbers');
+  console.log('represent an UPPER BOUND on achievable returns. Do not use for live capital sizing.');
+  console.log('');
+
   // Header
   report.push('# Backtest Report');
   report.push('');
@@ -75,8 +94,7 @@ export async function generateReport(
   report.push(`**Initial Capital:** $${initialCapital.toLocaleString()}`);
   report.push(`**Total Trades:** ${trades.length}`);
   report.push('');
-  report.push('---');
-  report.push('');
+  report.push(DISCLAIMER);
 
   // Performance Summary
   const summary = calculatePerformanceSummary(trades, initialCapital);

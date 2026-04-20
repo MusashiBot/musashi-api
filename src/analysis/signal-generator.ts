@@ -13,6 +13,7 @@ import { Market, MarketMatch, ArbitrageOpportunity, PositionSize } from '../type
 import { analyzeSentiment, SentimentResult } from './sentiment-analyzer';
 import { kellySizing, VolatilityRegime } from './kelly-sizing';
 import { logSignal } from '../db/signal-outcomes';
+import * as crypto from 'crypto';
 import {
   predictSignalQuality,
   SignalFeatures,
@@ -206,8 +207,11 @@ function generateSuggestedAction(
   return { direction, confidence: actionConfidence, edge, reasoning, position_size: positionSize };
 }
 
-function generateEventId(_text: string): string {
-  return crypto.randomUUID();
+function generateEventId(text: string, signalType?: string, marketId?: string): string {
+  const bucket = Math.floor(Date.now() / 300_000);
+  const canonical = `${marketId ?? ''}:${signalType ?? ''}:${bucket}:${text}`;
+  const hash = crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 24);
+  return `evt_${hash}`;
 }
 
 function buildMlFeatureVector(
@@ -266,7 +270,7 @@ export function generateSignal(
 
   if (matches.length === 0) {
     return {
-      event_id: generateEventId(tweetText),
+      event_id: generateEventId(tweetText, 'user_interest'),
       signal_type: 'user_interest',
       urgency: 'low',
       matches: [],
@@ -292,7 +296,7 @@ export function generateSignal(
   const valid_until_seconds = computeValidUntilSeconds(signal_type, urgency, topMarket);
 
   const signal: TradingSignal = {
-    event_id: generateEventId(tweetText),
+    event_id: generateEventId(tweetText, signal_type, topMarket.id),
     signal_type,
     urgency,
     matches,

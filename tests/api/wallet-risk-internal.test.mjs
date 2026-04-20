@@ -212,20 +212,28 @@ test('wallet/positions returns filtered positions and cached responses', async (
 // ─── Risk Session ───────────────────────────────────────────────────────────
 
 test('risk/session validates method and required body field', async () => {
+  process.env.INTERNAL_API_KEY = 'test-risk-key';
+  const authHeaders = { 'x-api-key': 'test-risk-key' };
+
   const methodRes = createMockResponse();
-  await riskSessionHandler({ method: 'GET', query: {}, headers: {} }, methodRes);
+  await riskSessionHandler({ method: 'GET', query: {}, headers: authHeaders }, methodRes);
   assert.equal(methodRes.statusCode, 405);
 
   const badBody = createMockResponse();
-  await riskSessionHandler({ method: 'POST', body: {}, query: {}, headers: {} }, badBody);
+  await riskSessionHandler({ method: 'POST', body: {}, query: {}, headers: authHeaders }, badBody);
   assert.equal(badBody.statusCode, 400);
 
   const outOfRange = createMockResponse();
-  await riskSessionHandler({ method: 'POST', body: { session_pnl_pct: -2 }, query: {}, headers: {} }, outOfRange);
+  await riskSessionHandler({ method: 'POST', body: { session_pnl_pct: -2 }, query: {}, headers: authHeaders }, outOfRange);
   assert.equal(outOfRange.statusCode, 400);
+
+  delete process.env.INTERNAL_API_KEY;
 });
 
 test('risk/session returns caution and halt throttle levels by pnl threshold', async () => {
+  process.env.INTERNAL_API_KEY = 'test-risk-key';
+  const authHeaders = { 'x-api-key': 'test-risk-key' };
+
   const cautionRes = createMockResponse();
   await riskSessionHandler({
     method: 'POST',
@@ -235,7 +243,7 @@ test('risk/session returns caution and halt throttle levels by pnl threshold', a
       largest_position_pct: 0.1,
     },
     query: {},
-    headers: {},
+    headers: authHeaders,
   }, cautionRes);
 
   assert.equal(cautionRes.statusCode, 200);
@@ -249,13 +257,15 @@ test('risk/session returns caution and halt throttle levels by pnl threshold', a
     method: 'POST',
     body: { session_pnl_pct: -0.11 },
     query: {},
-    headers: {},
+    headers: authHeaders,
   }, haltRes);
 
   assert.equal(haltRes.statusCode, 200);
   assert.equal(haltRes.body.data.throttle_level, 'halt');
   assert.equal(haltRes.body.data.max_position_pct, 0);
   assert.equal(haltRes.body.data.kelly_multiplier, 0);
+
+  delete process.env.INTERNAL_API_KEY;
 });
 
 // ─── Internal Resolve-Market ────────────────────────────────────────────────

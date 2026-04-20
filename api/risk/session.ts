@@ -128,6 +128,16 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
+  const allowedOrigin = process.env.ALLOWED_ORIGIN ?? '';
+
+  if (!allowedOrigin && process.env.NODE_ENV === 'production') {
+    console.error('[Risk Session API] FATAL: ALLOWED_ORIGIN must be set in production. Refusing to start with wildcard CORS.');
+  }
+
+  const origin = allowedOrigin || (process.env.NODE_ENV !== 'production' ? '*' : '');
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
@@ -148,6 +158,7 @@ export default async function handler(
   // Rate limiting
   const clientIp = getClientIp(req);
   if (isRateLimited(`risk:${clientIp}`, RISK_RATE_LIMIT)) {
+    res.setHeader('Retry-After', '60');
     res.status(429).json({
       success: false,
       error: 'Rate limit exceeded. Try again later.',

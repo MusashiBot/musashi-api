@@ -268,6 +268,20 @@ export function predictSignalQuality(
 }
 
 /**
+ * Get the enforced minimum number of real (non-synthetic) resolved signals
+ * required before the ML model can be used for live scoring.
+ * Clamped to a hard floor of 50 regardless of env var.
+ */
+export function getMinRealSignals(): number {
+  const raw = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
+  const clamped = Math.max(50, Number.isFinite(raw) ? raw : 200);
+  if (raw < 50 && Number.isFinite(raw)) {
+    console.warn('[ML] ML_MIN_REAL_SIGNALS clamped to 50 — never set below 50 in production');
+  }
+  return clamped;
+}
+
+/**
  * Check if ML model is available.
  * Useful for conditional logic in signal generation.
  */
