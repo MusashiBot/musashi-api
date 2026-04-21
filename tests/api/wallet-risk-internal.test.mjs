@@ -268,6 +268,25 @@ test('risk/session returns caution and halt throttle levels by pnl threshold', a
   delete process.env.INTERNAL_API_KEY;
 });
 
+test('risk/session includes Retry-After header when rate limited', async () => {
+  process.env.INTERNAL_API_KEY = 'test-rate-key';
+  const authHeaders = { 'x-api-key': 'test-rate-key', 'x-forwarded-for': '10.0.0.99' };
+
+  // Pre-fill the rate limit bucket so the next request triggers 429.
+  // RISK_RATE_LIMIT defaults to 30; exhaust 30 slots for this IP key.
+  const { isRateLimited } = await import('../../api/lib/rate-limit.ts');
+  for (let i = 0; i < 30; i++) {
+    isRateLimited('risk:10.0.0.99', 30);
+  }
+
+  const res = createMockResponse();
+  await riskSessionHandler({ method: 'POST', body: { session_pnl_pct: 0.01 }, query: {}, headers: authHeaders }, res);
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.headers['retry-after'], '60', 'Retry-After header must be present on 429');
+
+  delete process.env.INTERNAL_API_KEY;
+});
+
 // ─── Internal Resolve-Market ────────────────────────────────────────────────
 
 test('internal resolve-market enforces auth and input validation', async () => {

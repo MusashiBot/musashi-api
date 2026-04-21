@@ -49,7 +49,7 @@ Single reference for runtime configuration. Values are read at process start on 
 |----------|---------|---------|
 | `RISK_CAUTION_THRESHOLD` | `-0.05` | Session P&amp;L fraction triggering **caution** throttle. |
 | `RISK_HALT_THRESHOLD` | `-0.10` | Session P&amp;L fraction triggering **halt**. |
-| `ALLOWED_ORIGIN` | — | Origin allowed via CORS on `/api/risk/session`. **Required in production.** Omit for no CORS header. Set to `*` only in non-production. |
+| `ALLOWED_ORIGIN` | — | **Required in production.** The exact origin of your frontend (e.g. `https://app.yoursite.com`). Omitting this in production causes the server to refuse requests with a 500. Falls back to `*` outside production. |
 | `RISK_RATE_LIMIT` | `30` | Per-IP requests/min for `/api/risk/session`. |
 
 ## Rate limiting (application layer)

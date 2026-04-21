@@ -128,16 +128,15 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  const allowedOrigin = process.env.ALLOWED_ORIGIN ?? '';
+  const allowedOrigin = process.env.ALLOWED_ORIGIN;
 
   if (!allowedOrigin && process.env.NODE_ENV === 'production') {
-    console.error('[Risk Session API] FATAL: ALLOWED_ORIGIN must be set in production. Refusing to start with wildcard CORS.');
+    console.error('[CORS] ALLOWED_ORIGIN is not set in production — refusing to start.');
+    res.status(500).json({ success: false, error: 'Server misconfiguration.' });
+    return;
   }
 
-  const origin = allowedOrigin || (process.env.NODE_ENV !== 'production' ? '*' : '');
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin ?? '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

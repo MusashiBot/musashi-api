@@ -207,7 +207,7 @@ function generateSuggestedAction(
   return { direction, confidence: actionConfidence, edge, reasoning, position_size: positionSize };
 }
 
-function generateEventId(text: string, signalType?: string, marketId?: string): string {
+export function generateEventId(text: string, signalType?: string, marketId?: string): string {
   const bucket = Math.floor(Date.now() / 300_000);
   const canonical = `${marketId ?? ''}:${signalType ?? ''}:${bucket}:${text}`;
   const hash = crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 24);

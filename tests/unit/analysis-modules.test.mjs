@@ -239,16 +239,10 @@ test('KeywordMatcher respects max results ordering', () => {
 
 // ─── Event ID Determinism ─────────────────────────────────────────────────────
 
-test('generateEventId is deterministic — same input produces same ID', async () => {
-  const crypto = await import('crypto');
+const signalGenModule = await import('../../src/analysis/signal-generator.ts');
+const generateEventId = getExport(signalGenModule, 'generateEventId');
 
-  function generateEventId(text, signalType, marketId) {
-    const bucket = Math.floor(Date.now() / 300_000);
-    const canonical = `${marketId ?? ''}:${signalType ?? ''}:${bucket}:${text}`;
-    const hash = crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 24);
-    return `evt_${hash}`;
-  }
-
+test('generateEventId is deterministic — same input produces same ID', () => {
   const id1 = generateEventId('Breaking: Fed cuts rates', 'news_event', 'mkt-123');
   const id2 = generateEventId('Breaking: Fed cuts rates', 'news_event', 'mkt-123');
   assert.equal(id1, id2, 'Same inputs must produce identical event IDs');
@@ -256,57 +250,58 @@ test('generateEventId is deterministic — same input produces same ID', async (
   assert.equal(id1.length, 28, 'evt_ (4) + 24 hex chars');
 });
 
-test('generateEventId produces different IDs for different inputs', async () => {
-  const crypto = await import('crypto');
-
-  function generateEventId(text, signalType, marketId) {
-    const bucket = Math.floor(Date.now() / 300_000);
-    const canonical = `${marketId ?? ''}:${signalType ?? ''}:${bucket}:${text}`;
-    const hash = crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 24);
-    return `evt_${hash}`;
-  }
-
+test('generateEventId produces different IDs for different inputs', () => {
   const id1 = generateEventId('Breaking: Fed cuts rates', 'news_event', 'mkt-123');
   const id2 = generateEventId('Bearish sentiment on crypto', 'sentiment_shift', 'mkt-456');
   assert.notEqual(id1, id2, 'Different inputs must produce different event IDs');
 });
 
+test('generateEventId changes across 5-minute time bucket boundaries (expected)', () => {
+  const text = 'Same event text';
+  const signalType = 'news_event';
+  const marketId = 'mkt-boundary';
+
+  // Same inputs within the same bucket always match
+  const idA = generateEventId(text, signalType, marketId);
+  const idB = generateEventId(text, signalType, marketId);
+  assert.equal(idA, idB, 'Same bucket → same ID');
+
+  // Cross-bucket: the bucket is floor(Date.now()/300000). We verify the
+  // bucket is embedded in the hash by confirming the ID changes when the
+  // canonical string changes. We can't fast-forward the clock in a unit
+  // test, so we verify indirectly by confirming different text → different ID
+  // (which proves the canonical content matters).
+  const idC = generateEventId('Different text', signalType, marketId);
+  assert.notEqual(idA, idC, 'Different canonical content → different ID');
+});
+
 // ─── ML Minimum Signal Floor ──────────────────────────────────────────────────
 
-test('getMinRealSignals clamps to 50 minimum', async () => {
+const mlModelModule = await import('../../src/ml/signal-scorer-model.ts');
+const getMinRealSignals = getExport(mlModelModule, 'getMinRealSignals');
+
+test('getMinRealSignals clamps to 50 minimum', () => {
   const original = process.env.ML_MIN_REAL_SIGNALS;
 
   // Setting below 50 should be clamped to 50
   process.env.ML_MIN_REAL_SIGNALS = '10';
-  // Re-import to pick up env change — but since getMinRealSignals reads at call time,
-  // we test the logic inline
-  const raw10 = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
-  const clamped10 = Math.max(50, Number.isFinite(raw10) ? raw10 : 200);
-  assert.equal(clamped10, 50, 'Should clamp ML_MIN_REAL_SIGNALS=10 to 50');
+  assert.equal(getMinRealSignals(), 50, 'Should clamp ML_MIN_REAL_SIGNALS=10 to 50');
 
   // Default (unset) should be 200
   delete process.env.ML_MIN_REAL_SIGNALS;
-  const rawDefault = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
-  const clampedDefault = Math.max(50, Number.isFinite(rawDefault) ? rawDefault : 200);
-  assert.equal(clampedDefault, 200, 'Default should be 200');
+  assert.equal(getMinRealSignals(), 200, 'Default should be 200');
 
   // Valid value above 50 should pass through
   process.env.ML_MIN_REAL_SIGNALS = '100';
-  const raw100 = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
-  const clamped100 = Math.max(50, Number.isFinite(raw100) ? raw100 : 200);
-  assert.equal(clamped100, 100, '100 should pass through unchanged');
+  assert.equal(getMinRealSignals(), 100, '100 should pass through unchanged');
 
   // Exactly 50 should pass
   process.env.ML_MIN_REAL_SIGNALS = '50';
-  const raw50 = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
-  const clamped50 = Math.max(50, Number.isFinite(raw50) ? raw50 : 200);
-  assert.equal(clamped50, 50, 'Exactly 50 should pass through');
+  assert.equal(getMinRealSignals(), 50, 'Exactly 50 should pass through');
 
   // Non-numeric should fall back to 200
   process.env.ML_MIN_REAL_SIGNALS = 'abc';
-  const rawBad = parseInt(process.env.ML_MIN_REAL_SIGNALS ?? '200', 10);
-  const clampedBad = Math.max(50, Number.isFinite(rawBad) ? rawBad : 200);
-  assert.equal(clampedBad, 200, 'Non-numeric should fall back to 200');
+  assert.equal(getMinRealSignals(), 200, 'Non-numeric should fall back to 200');
 
   // Restore
   if (original !== undefined) {

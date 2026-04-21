@@ -13,7 +13,10 @@ src/ml/models/*.json
 !src/ml/models/.gitkeep
 !src/ml/models/README.md
 
-# Office binaries — store on shared drive instead
+# No Office binaries in git
 *.docx
 *.xlsx
 *.pptx
+*.doc
+*.xls
+*.ppt

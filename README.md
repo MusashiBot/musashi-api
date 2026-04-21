@@ -47,6 +47,7 @@ Key toggles: `MUSASHI_POLYMARKET_WS`, cache TTLs (`MARKET_CACHE_TTL_SECONDS`, `A
 
 ## Notes
 
+- Reference case study materials are stored externally — contact the team for access.
 - Historical reference docs remain in `*.upstream.md` files where present.
 - `vercel.json` routes must stay aligned with handlers under [`api/`](./api); [`api/health.ts`](./api/health.ts) summarizes supported endpoints.
 

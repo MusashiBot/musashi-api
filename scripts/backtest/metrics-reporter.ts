@@ -69,11 +69,12 @@ export async function generateReport(
   const report: string[] = [];
 
   const DISCLAIMER = [
-    '> **BACKTEST DISCLAIMER**',
-    '> ',
-    '> P&L and Sharpe figures are computed at **FAIR ODDS** (predicted probability),',
-    '> not actual market fill prices. Live fill prices will diverge. These numbers',
-    '> represent an **UPPER BOUND** on achievable returns. Do not use for live capital sizing.',
+    '╔══════════════════════════════════════════════════════════════════╗',
+    '║  ⚠  BACKTEST DISCLAIMER                                         ║',
+    '║  P&L and Sharpe are computed at FAIR ODDS (predicted_prob),     ║',
+    '║  NOT actual market fill prices. These are an UPPER BOUND on     ║',
+    '║  achievable returns. Do not use for live capital sizing.        ║',
+    '╚══════════════════════════════════════════════════════════════════╝',
     '',
     '---',
     '',
@@ -81,10 +82,12 @@ export async function generateReport(
 
   // Console disclaimer
   console.log('');
-  console.log('⚠️  BACKTEST DISCLAIMER');
-  console.log('P&L and Sharpe figures are computed at FAIR ODDS (predicted probability),');
-  console.log('not actual market fill prices. Live fill prices will diverge. These numbers');
-  console.log('represent an UPPER BOUND on achievable returns. Do not use for live capital sizing.');
+  console.log('╔══════════════════════════════════════════════════════════════════╗');
+  console.log('║  ⚠  BACKTEST DISCLAIMER                                         ║');
+  console.log('║  P&L and Sharpe are computed at FAIR ODDS (predicted_prob),     ║');
+  console.log('║  NOT actual market fill prices. These are an UPPER BOUND on     ║');
+  console.log('║  achievable returns. Do not use for live capital sizing.        ║');
+  console.log('╚══════════════════════════════════════════════════════════════════╝');
   console.log('');
 
   // Header
