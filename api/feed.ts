@@ -155,12 +155,20 @@ export default async function handler(
     }
 
     // Step 2: Apply cursor pagination
+    // FIX 6: when cursor is not found (expired tweet), the original code left
+    // startIndex at 0, silently restarting from page 1. The bot would re-process
+    // the entire feed on every poll cycle once any cursor expired. Return 410 instead.
     let startIndex = 0;
     if (cursor) {
       const cursorIndex = feedIndex.indexOf(cursor);
-      if (cursorIndex !== -1) {
-        startIndex = cursorIndex + 1; // Start after cursor
+      if (cursorIndex === -1) {
+        res.status(410).json({
+          success: false,
+          error: 'Cursor expired or invalid. Restart pagination from the beginning.',
+        });
+        return;
       }
+      startIndex = cursorIndex + 1;
     }
 
     // Step 3: Slice for limit

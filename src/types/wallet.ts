@@ -60,15 +60,3 @@ export interface MarketWalletFlow {
   netDirection: 'YES' | 'NO' | 'mixed' | 'unknown';
   largeTrades: WalletActivity[];
 }
-
-export interface SmartMoneyMarket {
-  marketId?: string;
-  conditionId?: string;
-  tokenId?: string;
-  marketTitle?: string;
-  marketSlug?: string;
-  category?: string;
-  url?: string;
-  score: number;
-  flow: MarketWalletFlow;
-}

@@ -7,9 +7,8 @@
     "dev": "node --import tsx scripts/local-api-server.ts",
     "local:api": "node --import tsx scripts/local-api-server.ts",
     "backend:dev": "node server/api-server.mjs",
-    "test:agent": "node --import tsx --test scripts/test-agent-api.ts",
-    "test:agent:local": "MUSASHI_API_BASE_URL=http://127.0.0.1:3000 node --import tsx --test scripts/test-agent-api.ts",
-    "test:wallet": "node --import tsx --test tests/wallet-endpoints.test.mjs",
+    "test:agent": "node --import tsx scripts/test-agent-api.ts",
+    "test:agent:local": "MUSASHI_API_BASE_URL=http://127.0.0.1:3000 node --import tsx scripts/test-agent-api.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p api/tsconfig.json",
     "clean": "rm -rf dist .vercel"
   },

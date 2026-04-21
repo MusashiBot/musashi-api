@@ -101,5 +101,8 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
   }
 
   // Mixed or weak signal
-  return { sentiment: 'neutral', confidence: 1 - Math.abs(bullishRatio - bearishRatio) };
+  // FIX 5: confidence should be LOW when the signal is evenly split (high ambiguity).
+  // The original formula (1 - diff) returned ~1.0 for a 50/50 split, which is backwards —
+  // a perfectly tied signal is maximally uncertain, not maximally confident.
+  return { sentiment: 'neutral', confidence: Math.abs(bullishRatio - bearishRatio) };
 }

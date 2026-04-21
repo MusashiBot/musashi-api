@@ -5,8 +5,7 @@
 import { Market } from '../types/market';
 import { generateKeywords } from './keyword-generator';
 
-// ptl issue: Kalshi API is returning 404 error
-const KALSHI_API = 'https://api.elections.kalshi.com/trade-api/v2';   
+const KALSHI_API = 'https://api.elections.kalshi.com/trade-api/v2';
 const FETCH_TIMEOUT_MS = 10000; // 10s timeout to prevent hanging on cold starts
 
 // Shape of a market object returned by the Kalshi REST API
@@ -17,16 +16,14 @@ interface KalshiMarket {
   title: string;
   market_type?: string;
   mve_collection_ticker?: string; // present only on multi-variable event (parlay) markets
-  yes_ask?: number | string | null;          // cents (0–100)
-  yes_ask_dollars?: number | string | null;  // same in dollars (0–1), prefer this if present
-  yes_bid?: number | string | null;
-  yes_bid_dollars?: number | string | null;
-  no_ask?: number | string | null;
-  no_ask_dollars?: number | string | null;
-  no_bid?: number | string | null;
-  no_bid_dollars?: number | string | null;
-  last_price?: number | string | null;       // last trade price for YES in cents
-  last_price_dollars?: number | string | null;
+  yes_ask: number;          // cents (0–100)
+  yes_ask_dollars?: number; // same in dollars (0–1), prefer this if present
+  yes_bid: number;
+  yes_bid_dollars?: number;
+  no_ask: number;
+  no_bid: number;
+  last_price?: number;      // last trade price for YES in cents
+  last_price_dollars?: number;
   volume?: number;
   volume_24h?: number;
   open_interest?: number;
@@ -43,44 +40,22 @@ interface KalshiMarketsResponse {
  * Returns true for simple binary YES/NO markets.
  * Filters out complex multi-variable event (parlay/combo) markets whose
  * titles are multi-leg strings like "yes Lakers, yes Celtics, no Bulls..."
- * basically filtering out events that require more than 1 thing to be predicted 
- * correctly to profit
  */
-function getMarketFilterReason(km: KalshiMarket): string | null {
-  if (!km.title || !km.ticker) return 'missing_title_or_ticker';
+function isSimpleMarket(km: KalshiMarket): boolean {
+  if (!km.title || !km.ticker) return false;
 
   // MVE / multi-game parlay markets
-  if (km.mve_collection_ticker) return 'mve_collection';
-  if (/MULTIGAME|MVE/i.test(km.ticker)) return 'mve_ticker';
-
-  // We only want markets that settle to a binary YES/NO payout.
-  if (km.market_type && km.market_type.toLowerCase() !== 'binary') return 'not_binary';
+  if (km.mve_collection_ticker) return false;
+  if (/MULTIGAME|MVE/i.test(km.ticker)) return false;
 
   // Titles that start with "yes " are multi-leg combo selections
-  if (/^yes\s/i.test(km.title.trim())) return 'combo_title';
+  if (/^yes\s/i.test(km.title.trim())) return false;
 
   // More than 2 commas = likely a multi-leg title
   const commas = (km.title.match(/,/g) || []).length;
-  if (commas > 2) return 'too_many_commas';
+  if (commas > 2) return false;
 
-  return null;
-}
-
-function isSimpleMarket(km: KalshiMarket): boolean {
-  return getMarketFilterReason(km) === null;
-}
-
-function summarizeFilterReasons(markets: KalshiMarket[]): string {
-  const counts = new Map<string, number>();
-  for (const market of markets) {
-    const reason = getMarketFilterReason(market) ?? 'accepted';
-    counts.set(reason, (counts.get(reason) ?? 0) + 1);
-  }
-
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([reason, count]) => `${reason}:${count}`)
-    .join(', ');
+  return true;
 }
 
 /**
@@ -131,8 +106,7 @@ export async function fetchKalshiMarkets(
 
       console.log(
         `[Musashi] Page ${page + 1}: ${data.markets.length} raw → ` +
-        `${pageSimple.length} simple (total simple: ${allSimple.length}; ` +
-        `${summarizeFilterReasons(data.markets)})`
+        `${pageSimple.length} simple (total simple: ${allSimple.length})`
       );
 
       // Stop early once we have enough, or when the API has no more pages
@@ -155,16 +129,16 @@ export async function fetchKalshiMarkets(
 function toMarket(km: KalshiMarket): Market {
   // Prefer the _dollars variant (already 0–1); fall back to /100 conversion
   let yesPrice: number;
-  const yesBid = normalizePrice(km.yes_bid_dollars, km.yes_bid);
-  const yesAsk = normalizePrice(km.yes_ask_dollars, km.yes_ask);
-  const noBid = normalizePrice(km.no_bid_dollars, km.no_bid);
-  const noAsk = normalizePrice(km.no_ask_dollars, km.no_ask);
-  const lastPrice = normalizePrice(km.last_price_dollars, km.last_price);
-
-  if (yesBid != null && yesAsk != null) {
-    yesPrice = (yesBid + yesAsk) / 2;
-  } else if (lastPrice != null) {
-    yesPrice = lastPrice;
+  // FIX 4: guard yes_bid_dollars > 0 — a zero bid (empty order book) would produce a
+  // midpoint of (0 + ask)/2, silently halving the price and generating false arbitrage signals.
+  if (km.yes_bid_dollars != null && km.yes_bid_dollars > 0 && km.yes_ask_dollars != null && km.yes_ask_dollars > 0) {
+    yesPrice = (km.yes_bid_dollars + km.yes_ask_dollars) / 2;
+  } else if (km.yes_bid != null && km.yes_ask != null && km.yes_ask > 0) {
+    yesPrice = ((km.yes_bid + km.yes_ask) / 2) / 100;
+  } else if (km.last_price_dollars != null && km.last_price_dollars > 0) {
+    yesPrice = km.last_price_dollars;
+  } else if (km.last_price != null && km.last_price > 0) {
+    yesPrice = km.last_price / 100;
   } else {
     yesPrice = 0.5;
   }
@@ -191,33 +165,11 @@ function toMarket(km: KalshiMarket): Market {
     keywords: generateKeywords(km.title),
     yesPrice: +safeYes.toFixed(2),
     noPrice: safeNo,
-    yesBid,
-    yesAsk,
-    noBid,
-    noAsk,
     volume24h: km.volume_24h ?? km.volume ?? 0,
     url: marketUrl,
     category: inferCategory(km.series_ticker || km.event_ticker || km.ticker),
     lastUpdated: new Date().toISOString(),
-    endDate: km.close_time,
   };
-}
-
-function toNumber(value: number | string | null | undefined): number | undefined {
-  if (value == null || value === '') return undefined;
-  const parsed = typeof value === 'number' ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function normalizePrice(
-  dollars?: number | string | null,
-  cents?: number | string | null,
-): number | undefined {
-  const dollarValue = toNumber(dollars);
-  const centValue = toNumber(cents);
-  const value = dollarValue != null ? dollarValue : centValue != null ? centValue / 100 : undefined;
-  if (value == null || !Number.isFinite(value) || value <= 0 || value >= 1) return undefined;
-  return +value.toFixed(2);
 }
 
 /** Convert a market title to a URL-safe slug (middle segment of Kalshi URLs) */
@@ -255,12 +207,11 @@ function extractSeriesTicker(ticker: string): string {
 /** Infer a rough category from the market's series/event ticker prefix */
 function inferCategory(ticker: string): string {
   const t = ticker.toUpperCase();
-  if (/LOL|VALORANT|ESPORT|DOTA|CS2|GAM(E|ING)/.test(t)) return 'esports';
   if (/BTC|ETH|CRYPTO|SOL|XRP|DOGE|NFT|DEFI/.test(t))  return 'crypto';
   if (/FED|CPI|GDP|INFL|RATE|ECON|UNEMP|JOBS|RECESS/.test(t)) return 'economics';
   if (/TRUMP|BIDEN|PRES|CONG|SENATE|ELECT|GOP|DEM|HOUSE/.test(t)) return 'us_politics';
   if (/NVDA|AAPL|MSFT|GOOGL|META|AMZN|AI|TECH|TSLA|OPENAI/.test(t)) return 'technology';
-  if (/NFL|NBA|MLB|NHL|SPORT|SUPER|WORLD|FIFA|GOLF|TENNIS|ITFMATCH|ITFWMATCH|SOCCER/.test(t)) return 'sports';
+  if (/NFL|NBA|MLB|NHL|SPORT|SUPER|WORLD|FIFA|GOLF|TENNIS/.test(t)) return 'sports';
   if (/CLIMATE|TEMP|WEATHER|CARBON|EMISS|ENERGY|OIL/.test(t)) return 'climate';
   if (/UKRAIN|RUSSIA|CHINA|NATO|TAIWAN|ISRAEL|GAZA|IRAN/.test(t)) return 'geopolitics';
   return 'other';

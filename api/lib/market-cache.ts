@@ -57,15 +57,17 @@ function withTimeout<T>(
   timeoutMs: number,
   sourceName: string
 ): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
-        timeoutMs
-      )
-    ),
-  ]);
+  // FIX 3: capture the timer handle so it can be cleared when promise resolves.
+  // Original code never called clearTimeout — under load, unreleased timers
+  // accumulated in the event loop, degrading inference latency.
+  let handle: ReturnType<typeof setTimeout>;
+  const timer = new Promise<T>((_, reject) => {
+    handle = setTimeout(
+      () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  return Promise.race([promise, timer]).finally(() => clearTimeout(handle));
 }
 
 /**

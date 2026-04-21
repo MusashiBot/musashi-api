@@ -77,10 +77,9 @@ function calculateEdge(market: Market, sentiment: SentimentResult): number {
   const currentPrice = market.yesPrice;
 
   // Raw difference between implied and actual price
-  const priceDiff = Math.abs(impliedProb - currentPrice);
-
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
+  // FIX 1: removed redundant sentiment.confidence multiplication — calculateImpliedProbability
+  // already scales by confidence, so multiplying again was double-discounting edge by ~40-80%
+  const edge = Math.abs(impliedProb - currentPrice);
 
   return edge;
 }
@@ -188,29 +187,22 @@ function generateSuggestedAction(
   let direction: Direction;
   let reasoning: string;
 
+  // FIX 2: direction is determined purely by whether impliedProb is above or below
+  // currentPrice — not by the sentiment label. The old code returned HOLD when sentiment
+  // was "bearish" but impliedProb still exceeded currentPrice (e.g. mildly bearish signal
+  // on a market already priced at 20¢), missing profitable YES entries.
   if (sentiment.sentiment === 'neutral') {
     direction = 'HOLD';
     reasoning = 'Neutral sentiment, no clear directional bias';
-  } else if (sentiment.sentiment === 'bullish') {
-    // Bullish sentiment
-    if (impliedProb > currentPrice) {
-      // YES is underpriced
-      direction = 'YES';
-      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bullish sentiment but YES already priced high';
-    }
+  } else if (impliedProb > currentPrice) {
+    direction = 'YES';
+    reasoning = `${sentiment.sentiment === 'bullish' ? 'Bullish' : 'Mildly bearish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
+  } else if (impliedProb < currentPrice) {
+    direction = 'NO';
+    reasoning = `${sentiment.sentiment === 'bearish' ? 'Bearish' : 'Mildly bullish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
   } else {
-    // Bearish sentiment
-    if (impliedProb < currentPrice) {
-      // YES is overpriced, buy NO
-      direction = 'NO';
-      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bearish sentiment but YES already priced low';
-    }
+    direction = 'HOLD';
+    reasoning = 'Implied probability matches current price, no edge';
   }
 
   // Confidence based on edge and urgency

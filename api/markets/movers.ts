@@ -110,8 +110,11 @@ async function getPriceChange(marketId: string, hoursAgo: number): Promise<{ cha
     }
   }
 
-  // If too far from target, return null
-  if (closestDiff > (hoursAgo * 60 * 60 * 1000 * 2)) {
+  // FIX 7: original tolerance was 2× hoursAgo — for a 1-hour lookback this accepted
+  // snapshots up to 3 hours old as a valid "1 hour ago" reference, overstating price
+  // changes by 2-3×. Tightened to 0.5× so the reference snapshot must be within
+  // ±30 min of the target time (e.g. between 30 min and 90 min ago for hoursAgo=1).
+  if (closestDiff > (hoursAgo * 60 * 60 * 1000 * 0.5)) {
     return null;
   }
 
