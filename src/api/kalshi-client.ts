@@ -80,45 +80,72 @@ export async function fetchKalshiMarkets(
       ? `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`
       : `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=${PAGE_SIZE}`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    // --- Fix #1: Retry with exponential backoff on 429 / timeout ---
+    const MAX_RETRIES = 3;
+    let resp: Response | null = null;
 
-    try {
-      const resp = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      if (!resp.ok) {
-        console.error(`[Musashi SW] Kalshi HTTP ${resp.status} — declarativeNetRequest header stripping may not be active yet`);
+      try {
+        resp = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (resp.ok) break;
+
+        if (resp.status === 429 && attempt < MAX_RETRIES) {
+          const backoffMs = 1000 * Math.pow(2, attempt);
+          console.warn(
+            `[Musashi] Kalshi 429 rate limited, retry in ${backoffMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+          );
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        console.error(`[Musashi SW] Kalshi HTTP ${resp.status}`);
         throw new Error(`Kalshi API responded with ${resp.status}`);
+      } catch (error) {
+        clearTimeout(timeoutId);
+        if ((error as Error).name === 'AbortError') {
+          if (attempt < MAX_RETRIES) {
+            const backoffMs = 1000 * Math.pow(2, attempt);
+            console.warn(
+              `[Musashi] Kalshi timeout, retry in ${backoffMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+            );
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+            continue;
+          }
+          throw new Error(`Kalshi API request timed out after ${FETCH_TIMEOUT_MS}ms`);
+        }
+        throw error;
       }
-
-      const data = await resp.json() as KalshiMarketsResponse;
-      if (!Array.isArray(data.markets)) {
-        throw new Error('Unexpected Kalshi API response shape');
-      }
-
-      const pageSimple = data.markets
-        .filter(isSimpleMarket)
-        .map(toMarket)
-        .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
-
-      allSimple.push(...pageSimple);
-
-      console.log(
-        `[Musashi] Page ${page + 1}: ${data.markets.length} raw → ` +
-        `${pageSimple.length} simple (total simple: ${allSimple.length})`
-      );
-
-      // Stop early once we have enough, or when the API has no more pages
-      if (allSimple.length >= targetSimpleCount || !data.cursor) break;
-      cursor = data.cursor;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if ((error as Error).name === 'AbortError') {
-        throw new Error(`Kalshi API request timed out after ${FETCH_TIMEOUT_MS}ms`);
-      }
-      throw error;
     }
+
+    if (!resp || !resp.ok) {
+      throw new Error(`Kalshi API failed after ${MAX_RETRIES + 1} attempts`);
+    }
+
+    const data = await resp.json() as KalshiMarketsResponse;
+    if (!Array.isArray(data.markets)) {
+      throw new Error('Unexpected Kalshi API response shape');
+    }
+
+    const pageSimple = data.markets
+      .filter(isSimpleMarket)
+      .map(toMarket)
+      .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
+
+    allSimple.push(...pageSimple);
+
+    console.log(
+      `[Musashi] Page ${page + 1}: ${data.markets.length} raw → ` +
+      `${pageSimple.length} simple (total simple: ${allSimple.length})`
+    );
+
+    // Stop early once we have enough, or when the API has no more pages
+    if (allSimple.length >= targetSimpleCount || !data.cursor) break;
+    cursor = data.cursor;
   }
 
   console.log(`[Musashi] Fetched ${allSimple.length} live markets from Kalshi`);
@@ -213,4 +240,35 @@ function inferCategory(ticker: string): string {
   if (/CLIMATE|TEMP|WEATHER|CARBON|EMISS|ENERGY|OIL/.test(t)) return 'climate';
   if (/UKRAIN|RUSSIA|CHINA|NATO|TAIWAN|ISRAEL|GAZA|IRAN/.test(t)) return 'geopolitics';
   return 'other';
+}
+
+/**
+ * Fix #4: Override category when keywords clearly indicate a different category
+ * than what the platform returned. Applies to both Polymarket and Kalshi markets.
+ */
+export function overrideCategory(market: Market): Market {
+  const text = `${market.title} ${market.keywords.join(' ')}`.toLowerCase();
+
+  // Geopolitics (check before us_politics since they overlap)
+  if (/\b(iran|military action|peace deal|ceasefire|nato|ukraine|russia|war\b|invasion|missile|strike|sanctions|nuclear)\b/.test(text)) {
+    if (market.category === 'technology' || market.category === 'other') {
+      return { ...market, category: 'geopolitics' };
+    }
+  }
+
+  // US Politics
+  if (/\b(trump|biden|election|congress|senate|impeach|executive order|white house|potus|president)\b/.test(text)) {
+    if (market.category === 'technology' || market.category === 'other') {
+      return { ...market, category: 'us_politics' };
+    }
+  }
+
+  // Crypto
+  if (/\b(bitcoin|btc|ethereum|eth|crypto|defi|blockchain|solana)\b/.test(text)) {
+    if (market.category === 'technology' || market.category === 'other') {
+      return { ...market, category: 'crypto' };
+    }
+  }
+
+  return market;
 }

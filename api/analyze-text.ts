@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { overrideCategory } from '../src/api/kalshi-client';
 
 function isMalformedJsonError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -128,9 +129,9 @@ export default async function handler(
     }
 
     // Get markets
-    const markets = await getMarkets();
+    const rawMarkets = await getMarkets();
 
-    if (markets.length === 0) {
+    if (rawMarkets.length === 0) {
       res.status(503).json({
         event_id: 'evt_error',
         signal_type: 'user_interest',
@@ -140,6 +141,9 @@ export default async function handler(
       });
       return;
     }
+
+    // Fix #4: Override miscategorized markets before matching
+    const markets = rawMarkets.map(overrideCategory);
 
     // Match markets
     const matcher = new KeywordMatcher(markets, minConfidence, maxResults);

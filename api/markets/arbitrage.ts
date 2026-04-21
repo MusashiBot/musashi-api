@@ -31,7 +31,7 @@ export default async function handler(
   try {
     // Parse query parameters
     const {
-      minSpread = '0.03',
+      minSpread = '0.02',   // Fix #5: lowered from 0.03 to capture more arb opportunities
       minConfidence = '0.5',
       limit = '20',
       category,

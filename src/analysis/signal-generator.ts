@@ -71,6 +71,10 @@ function calculateImpliedProbability(sentiment: SentimentResult): number {
 /**
  * Calculate trading edge for a market given sentiment
  * Edge = how much the sentiment-implied probability differs from market price
+ *
+ * Fix #2: Normalize by headroom so a 5% diff on a 50/50 market is weighted
+ * differently than 5% on a 90/10 market. This prevents the edge from being
+ * artificially low on markets near the extremes.
  */
 function calculateEdge(market: Market, sentiment: SentimentResult): number {
   const impliedProb = calculateImpliedProbability(sentiment);
@@ -79,8 +83,12 @@ function calculateEdge(market: Market, sentiment: SentimentResult): number {
   // Raw difference between implied and actual price
   const priceDiff = Math.abs(impliedProb - currentPrice);
 
-  // Weight by sentiment confidence
-  const edge = sentiment.confidence * priceDiff;
+  // Headroom: how much room the market has to move (min of distance to 0 or 1)
+  const headroom = Math.min(currentPrice, 1 - currentPrice);
+  const normalizedDiff = headroom > 0 ? priceDiff / headroom : priceDiff;
+
+  // Blend raw diff with headroom-normalized diff, weighted by confidence
+  const edge = sentiment.confidence * Math.max(priceDiff, normalizedDiff * 0.5);
 
   return edge;
 }
@@ -173,11 +181,13 @@ function generateSuggestedAction(
   urgency: UrgencyLevel
 ): SuggestedAction {
   // Don't suggest action if edge is too low
-  if (edge < 0.10) {
+  // Fix #2: Lowered from 0.10 to 0.05 so the API surfaces more signals
+  // and lets the bot apply its own threshold
+  if (edge < 0.05) {
     return {
       direction: 'HOLD',
       confidence: 0,
-      edge: 0,
+      edge: edge,  // Fix #3: Pass real edge (was hardcoded 0)
       reasoning: 'Insufficient edge to justify a trade',
     };
   }
