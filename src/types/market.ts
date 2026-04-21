@@ -9,6 +9,7 @@ export interface Market {
   yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
   noPrice: number;  // 0.0 to 1.0 (0.35 = 35%)
   volume24h: number; // 24h trading volume in dollars
+  volume?: number; // alias for volume24h, added so bot can use
   url: string;
   category: string;
   lastUpdated: string; // ISO timestamp
