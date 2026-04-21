@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  @apply transition-colors;
+}
+
+body {
+  @apply bg-white dark:bg-black text-gray-900 dark:text-gray-50;
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.card {
+  @apply bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm hover:shadow-md;
+}
+
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply badge bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200;
+}
+
+.badge-danger {
+  @apply badge bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200;
+}
+
+.badge-warning {
+  @apply badge bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200;
+}
+
+.badge-info {
+  @apply badge bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200;
+}
+
+.ws-connected {
+  @apply bg-green-500 dark:bg-green-600;
+}
+
+.ws-connecting {
+  @apply bg-yellow-500 dark:bg-yellow-600 animate-pulse;
+}
+
+.ws-disconnected {
+  @apply bg-red-500 dark:bg-red-600;
+}
