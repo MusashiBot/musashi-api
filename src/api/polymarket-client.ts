@@ -32,6 +32,33 @@ interface PolymarketMarket {
   endDateIso?: string;          // ISO date e.g. "2026-03-31"
 }
 
+// Keywords mirroring Kalshi's 24 targeted series (KXBTC, KXFED, KXTRUMPRESIGN, etc.)
+// A Polymarket market must match at least one group to be included.
+// This replaces pure volume-sorted pagination with topic-targeted fetching.
+const KALSHI_TOPIC_PATTERNS: RegExp[] = [
+  // Crypto — KXBTC, KXETH, KXXRP
+  /\b(bitcoin|btc|ethereum|eth|xrp|ripple|crypto)\b/i,
+  // Economics / Fed — KXFED, KXCPI, KXGDP
+  /\b(federal funds|fed rate|interest rate|fomc|cpi|inflation|gdp|recession)\b/i,
+  // US Politics — KXTRUMPRESIGN, KXTRUMPPARDONS, KXNEXTSPEAKER, KXPRESPERSON, KXPRESPARTY, KXNEXTPRESSEC, KXAMEND22
+  /\b(trump|pardon|speaker of the house|next president|22nd amendment|press secretary)\b/i,
+  // Geopolitics — KXZELENSKYPUTIN, KXTAIWANLVL4, KXNEXTISRAELPM, KXWITHDRAW, KXUSTAKEOVER
+  /\b(zelensky|putin|russia|ukraine|taiwan|israel|prime minister|troop withdrawal)\b/i,
+  // Tech / AI — KXOAIANTH, KXAGICO, KXDATACENTER
+  /\b(openai|anthropic|agi|artificial general intelligence|data center)\b/i,
+  // Elections / leadership — KXNEWPOPE, KXNEXTUKPM, KXUKPARTY
+  /\b(pope|uk (election|prime minister|party)|labour|conservative|reform party)\b/i,
+];
+
+/**
+ * Returns true if the market question matches at least one Kalshi topic area.
+ * This keeps Polymarket fetches aligned with the topics Kalshi covers so
+ * the arbitrage matcher sees comparable markets on both sides.
+ */
+function matchesKalshiTopics(question: string): boolean {
+  return KALSHI_TOPIC_PATTERNS.some(re => re.test(question));
+}
+
 /**
  * Returns true only for simple binary Yes/No markets.
  * Filters out multi-outcome and non-binary markets.
@@ -92,6 +119,7 @@ export async function fetchPolymarkets(
 
       const pageBinary = data
         .filter(isBinaryMarket)
+        .filter(pm => matchesKalshiTopics(pm.question))
         .map(toMarket)
         .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
 
@@ -99,7 +127,7 @@ export async function fetchPolymarkets(
 
       console.log(
         `[Musashi] Polymarket page ${page + 1}: ${data.length} raw → ` +
-        `${pageBinary.length} binary (total: ${allMarkets.length})`
+        `${pageBinary.length} topic-matched (total: ${allMarkets.length})`
       );
 
       if (allMarkets.length >= targetCount || data.length < PAGE_SIZE) break;

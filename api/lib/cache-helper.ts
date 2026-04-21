@@ -135,10 +135,17 @@ const feedCache = new Map<string, {
   ttl: number;
 }>();
 
+const MAX_FEED_CACHE_ENTRIES = 50;
+
 /**
- * Store feed data in memory for fallback
+ * Store feed data in memory for fallback.
+ * Evicts the oldest entry (insertion order) when the cap is reached so
+ * the Map cannot grow unboundedly inside a warm lambda.
  */
 export function setFeedCache(key: string, data: any, ttlMs: number): void {
+  if (feedCache.size >= MAX_FEED_CACHE_ENTRIES) {
+    feedCache.delete(feedCache.keys().next().value!);
+  }
   feedCache.set(key, {
     data,
     timestamp: Date.now(),

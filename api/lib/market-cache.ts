@@ -30,13 +30,16 @@ let cachedArbitrage: ArbitrageOpportunity[] = [];
 let arbCacheTimestamp = 0;
 const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '15', 10)) * 1000;
 
-const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
+// Keyword filter drops Polymarket yield to ~15 matches/page; 300 topic-relevant
+// markets across 20 pages is enough to cover Kalshi's 651 targeted markets.
+const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 300);
 const POLYMARKET_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_POLYMARKET_MAX_PAGES, 20);
 const KALSHI_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_KALSHI_TARGET_COUNT, 1000);
 const KALSHI_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_KALSHI_MAX_PAGES, 20);
 
-// Stage 0 Session 2: Per-source timeout (5 seconds)
-const SOURCE_TIMEOUT_MS = 5000;
+// Polymarket: 20 pages × ~1.5s = ~30s. Kalshi: 24 series × 500ms delay = ~15s.
+// 60s gives both enough headroom on cold start.
+const SOURCE_TIMEOUT_MS = parsePositiveInt(process.env.MUSASHI_SOURCE_TIMEOUT_MS, 60_000);
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -57,17 +60,15 @@ function withTimeout<T>(
   timeoutMs: number,
   sourceName: string
 ): Promise<T> {
-  // FIX 3: capture the timer handle so it can be cleared when promise resolves.
-  // Original code never called clearTimeout — under load, unreleased timers
-  // accumulated in the event loop, degrading inference latency.
-  let handle: ReturnType<typeof setTimeout>;
-  const timer = new Promise<T>((_, reject) => {
-    handle = setTimeout(
-      () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
-      timeoutMs
-    );
-  });
-  return Promise.race([promise, timer]).finally(() => clearTimeout(handle));
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      )
+    ),
+  ]);
 }
 
 /**

@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalyzedTweet, FeedResponse, AccountCategory } from '../src/types/feed';
 import { batchGetFromKV, setFeedCache, getFeedCache, getFeedCacheTimestamp } from './lib/cache-helper';
 import { kv } from './lib/vercel-kv';
+import { checkRateLimit } from './lib/rate-limit';
 
 // ─── KV Storage Keys ───────────────────────────────────────────────────────
 
@@ -15,6 +16,23 @@ function getTweetKey(tweetId: string): string {
 
 function getCategoryKey(category: AccountCategory): string {
   return `feed:category:${category}`;
+}
+
+function getFeedCacheKey(params: {
+  category?: string;
+  minUrgency?: string;
+  limit: number;
+  since?: string;
+  cursor?: string;
+}): string {
+  return [
+    FEED_CACHE_KEY_PREFIX,
+    params.category || 'all',
+    params.minUrgency || 'all',
+    params.limit,
+    params.since || 'none',
+    params.cursor || 'none',
+  ].join('_');
 }
 
 function isInfraError(message: string): boolean {
@@ -76,6 +94,8 @@ export default async function handler(
     return;
   }
 
+  if (!await checkRateLimit(req, res)) return;
+
   try {
     // Parse query parameters
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
@@ -85,7 +105,7 @@ export default async function handler(
     const cursor = req.query.cursor as string | undefined;
 
     // Build cache key for in-memory fallback
-    const cacheKey = `${FEED_CACHE_KEY_PREFIX}${category || 'all'}_${minUrgency || 'all'}_${limit}`;
+    const cacheKey = getFeedCacheKey({ category, minUrgency, limit, since, cursor });
 
     // Validate parameters
     if (limit < 1 || limit > 100) {
@@ -155,20 +175,12 @@ export default async function handler(
     }
 
     // Step 2: Apply cursor pagination
-    // FIX 6: when cursor is not found (expired tweet), the original code left
-    // startIndex at 0, silently restarting from page 1. The bot would re-process
-    // the entire feed on every poll cycle once any cursor expired. Return 410 instead.
     let startIndex = 0;
     if (cursor) {
       const cursorIndex = feedIndex.indexOf(cursor);
-      if (cursorIndex === -1) {
-        res.status(410).json({
-          success: false,
-          error: 'Cursor expired or invalid. Restart pagination from the beginning.',
-        });
-        return;
+      if (cursorIndex !== -1) {
+        startIndex = cursorIndex + 1; // Start after cursor
       }
-      startIndex = cursorIndex + 1;
     }
 
     // Step 3: Slice for limit
@@ -229,51 +241,46 @@ export default async function handler(
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Feed API] Error:', errorMessage);
 
-    const isQuotaError = errorMessage.includes('quota') || errorMessage.includes('max requests limit');
+    // Attempt stale cache fallback for ALL KV errors — not just quota errors.
+    // A network timeout, auth failure, or Upstash outage should still serve
+    // the last known-good feed rather than returning a hard 500 that breaks
+    // the bot's polling loop. cacheKey is re-derived here because it is
+    // scoped inside the try block above.
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+    const category = req.query.category as AccountCategory | undefined;
+    const minUrgency = req.query.minUrgency as string | undefined;
+    const since = req.query.since as string | undefined;
+    const cursor = req.query.cursor as string | undefined;
+    const cacheKey = getFeedCacheKey({ category, minUrgency, limit, since, cursor });
 
-    // Fallback to in-memory cache on quota error
-    if (isQuotaError) {
-      // Parse query parameters again (they're in try block scope)
-      const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-      const category = req.query.category as AccountCategory | undefined;
-      const minUrgency = req.query.minUrgency as string | undefined;
-      const cacheKey = `${FEED_CACHE_KEY_PREFIX}${category || 'all'}_${minUrgency || 'all'}_${limit}`;
+    const cachedResponse = getFeedCache(cacheKey);
+    const cachedAt = getFeedCacheTimestamp(cacheKey);
 
-      const cachedResponse = getFeedCache(cacheKey);
-      const cachedAt = getFeedCacheTimestamp(cacheKey);
-
-      if (cachedResponse) {
-        // Modify response to indicate it's cached
-        const fallbackResponse = {
-          ...cachedResponse,
-          data: {
-            ...cachedResponse.data,
-            metadata: {
-              ...cachedResponse.data.metadata,
-              cached: true,
-              cached_at: cachedAt ? new Date(cachedAt).toISOString() : null,
-              cache_age_seconds: cachedAt ? Math.floor((Date.now() - cachedAt) / 1000) : null,
-            },
+    if (cachedResponse) {
+      const fallbackResponse = {
+        ...cachedResponse,
+        data: {
+          ...cachedResponse.data,
+          metadata: {
+            ...cachedResponse.data.metadata,
+            stale: true,
+            cached: true,
+            cached_at: cachedAt ? new Date(cachedAt).toISOString() : null,
+            cache_age_seconds: cachedAt ? Math.floor((Date.now() - cachedAt) / 1000) : null,
           },
-        };
+        },
+      };
 
-        console.log(`[Feed API] Serving cached feed (age: ${fallbackResponse.data.metadata.cache_age_seconds}s)`);
-        res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
-        res.status(200).json(fallbackResponse);
-        return;
-      }
+      console.log(`[Feed API] Serving stale cache (age: ${fallbackResponse.data.metadata.cache_age_seconds}s) after error: ${errorMessage}`);
+      res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
+      res.status(200).json(fallbackResponse);
+      return;
     }
 
-    const sanitized = getSanitizedFeedError(errorMessage);
     res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
-    res.status(isQuotaError ? 503 : sanitized.status).json({
+    res.status(503).json({
       success: false,
-      error: isQuotaError
-        ? 'Service temporarily unavailable due to quota limits. No cached data available.'
-        : sanitized.error,
-      ...(sanitized.note && {
-        note: sanitized.note,
-      }),
+      error: 'Feed unavailable. No cached data available.',
     });
   }
 }

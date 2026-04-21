@@ -69,19 +69,33 @@ function calculateImpliedProbability(sentiment: SentimentResult): number {
 }
 
 /**
- * Calculate trading edge for a market given sentiment
- * Edge = how much the sentiment-implied probability differs from market price
+ * Calculate trading edge for a market given sentiment and keyword match quality.
+ *
+ * Edge = effective confidence × price gap between implied and market price.
+ *
+ * Match confidence can strengthen a directional signal, but neutral text has
+ * no outcome direction and therefore contributes no trading edge by itself.
  */
-function calculateEdge(market: Market, sentiment: SentimentResult): number {
+function calculateEdge(
+  market: Market,
+  sentiment: SentimentResult,
+  matchConfidence: number = 0
+): number {
+  if (sentiment.sentiment === 'neutral') {
+    return 0;
+  }
+
   const impliedProb = calculateImpliedProbability(sentiment);
   const currentPrice = market.yesPrice;
 
-  // Raw difference between implied and actual price
-  // FIX 1: removed redundant sentiment.confidence multiplication — calculateImpliedProbability
-  // already scales by confidence, so multiplying again was double-discounting edge by ~40-80%
-  const edge = Math.abs(impliedProb - currentPrice);
+  const priceDiff = Math.abs(impliedProb - currentPrice);
 
-  return edge;
+  // Use whichever confidence signal is stronger:
+  // - matchConfidence: how precisely the text is about this market
+  // - sentiment.confidence: how strongly directional the language is
+  const effectiveConfidence = Math.max(sentiment.confidence, matchConfidence);
+
+  return effectiveConfidence * priceDiff;
 }
 
 /**
@@ -169,7 +183,8 @@ function generateSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
   edge: number,
-  urgency: UrgencyLevel
+  urgency: UrgencyLevel,
+  matchConfidence: number = 0
 ): SuggestedAction {
   // Don't suggest action if edge is too low
   if (edge < 0.10) {
@@ -187,22 +202,38 @@ function generateSuggestedAction(
   let direction: Direction;
   let reasoning: string;
 
-  // FIX 2: direction is determined purely by whether impliedProb is above or below
-  // currentPrice — not by the sentiment label. The old code returned HOLD when sentiment
-  // was "bearish" but impliedProb still exceeded currentPrice (e.g. mildly bearish signal
-  // on a market already priced at 20¢), missing profitable YES entries.
   if (sentiment.sentiment === 'neutral') {
-    direction = 'HOLD';
-    reasoning = 'Neutral sentiment, no clear directional bias';
-  } else if (impliedProb > currentPrice) {
-    direction = 'YES';
-    reasoning = `${sentiment.sentiment === 'bullish' ? 'Bullish' : 'Mildly bearish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
-  } else if (impliedProb < currentPrice) {
-    direction = 'NO';
-    reasoning = `${sentiment.sentiment === 'bearish' ? 'Bearish' : 'Mildly bullish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
+    // Neutral sentiment (e.g. factual news): use price gap + match confidence as the signal
+    if (impliedProb > currentPrice) {
+      direction = 'YES';
+      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES underpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
+    } else if (impliedProb < currentPrice) {
+      direction = 'NO';
+      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES overpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
+    } else {
+      direction = 'HOLD';
+      reasoning = 'Neutral sentiment with no significant price gap';
+    }
+  } else if (sentiment.sentiment === 'bullish') {
+    // Bullish sentiment
+    if (impliedProb > currentPrice) {
+      // YES is underpriced
+      direction = 'YES';
+      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
+    } else {
+      direction = 'HOLD';
+      reasoning = 'Bullish sentiment but YES already priced high';
+    }
   } else {
-    direction = 'HOLD';
-    reasoning = 'Implied probability matches current price, no edge';
+    // Bearish sentiment
+    if (impliedProb < currentPrice) {
+      // YES is overpriced, buy NO
+      direction = 'NO';
+      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
+    } else {
+      direction = 'HOLD';
+      reasoning = 'Bearish sentiment but YES already priced low';
+    }
   }
 
   // Confidence based on edge and urgency
@@ -266,7 +297,7 @@ export function generateSignal(
   const topMarket = topMatch.market;
 
   // Calculate edge
-  const edge = calculateEdge(topMarket, sentiment);
+  const edge = calculateEdge(topMarket, sentiment, topMatch.confidence);
 
   // Compute urgency
   const urgency = computeUrgency(
@@ -280,7 +311,7 @@ export function generateSignal(
   const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
 
   // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
+  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency, topMatch.confidence);
 
   return {
     event_id: generateEventId(tweetText),

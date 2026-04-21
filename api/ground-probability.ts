@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { getMarkets, getMarketMetadata } from './lib/market-cache';
 import { Market, MarketMatch } from '../src/types/market';
+import { checkRateLimit } from './lib/rate-limit';
 
 /**
  * Ground Probability Endpoint
@@ -166,6 +167,8 @@ export default async function handler(
     return;
   }
 
+  if (!await checkRateLimit(req, res)) return;
+
   const startTime = Date.now();
 
   try {
@@ -181,15 +184,17 @@ export default async function handler(
     }
 
     // Validate claim
-    if (!body.claim || typeof body.claim !== 'string') {
+    if (typeof body.claim !== 'string' || !body.claim.trim()) {
       res.status(400).json({
         success: false,
-        error: 'Missing or invalid "claim" field. Must be a string.',
+        error: 'Missing or invalid "claim" field. Must be a non-empty string.',
       });
       return;
     }
 
-    if (body.claim.length > 1000) {
+    const claim = body.claim.trim();
+
+    if (claim.length > 1000) {
       res.status(400).json({
         success: false,
         error: 'Claim exceeds 1,000 character limit.',
@@ -214,11 +219,15 @@ export default async function handler(
     }
 
     const {
-      claim,
       llm_estimate = null,
       min_confidence = 0.3,
-      max_markets = 5,
     } = body;
+
+    // Clamp max_markets to [1, 20] rather than rejecting — any numeric input
+    // produces a valid result; NaN/undefined/out-of-range all fall back to 5.
+    const max_markets = Number.isFinite(body.max_markets)
+      ? Math.max(1, Math.min(20, body.max_markets as number))
+      : 5;
 
     // Validate numeric parameters
     if (
@@ -230,19 +239,6 @@ export default async function handler(
       res.status(400).json({
         success: false,
         error: 'min_confidence must be between 0 and 1.',
-      });
-      return;
-    }
-
-    if (
-      typeof max_markets !== 'number' ||
-      !Number.isFinite(max_markets) ||
-      max_markets < 1 ||
-      max_markets > 20
-    ) {
-      res.status(400).json({
-        success: false,
-        error: 'max_markets must be between 1 and 20.',
       });
       return;
     }
