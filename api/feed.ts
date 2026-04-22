@@ -178,9 +178,14 @@ export default async function handler(
     let startIndex = 0;
     if (cursor) {
       const cursorIndex = feedIndex.indexOf(cursor);
-      if (cursorIndex !== -1) {
-        startIndex = cursorIndex + 1; // Start after cursor
+      if (cursorIndex === -1) {
+        res.status(410).json({
+          success: false,
+          error: 'Cursor expired or invalid. Restart pagination from the beginning.',
+        });
+        return;
       }
+      startIndex = cursorIndex + 1; // Start after cursor
     }
 
     // Step 3: Slice for limit

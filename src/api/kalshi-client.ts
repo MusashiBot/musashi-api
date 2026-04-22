@@ -11,7 +11,13 @@ const INTER_PAGE_DELAY_MS = 500; // throttle: wait 500ms between page requests
 const RATE_LIMIT_RETRY_DELAY_MS = 5000; // on 429: wait 5s and retry once
 const KALSHI_CACHE_TTL_MS = 60_000; // cache Kalshi results for 60 seconds
 
-let kalshiCache: { markets: Market[]; fetchedAt: number } | null = null;
+let kalshiCache: {
+  markets: Market[];
+  fetchedAt: number;
+  targetSimpleCount: number;
+  maxPages: number;
+  complete: boolean;
+} | null = null;
 
 // Shape of a market object returned by the Kalshi REST API
 interface KalshiMarket {
@@ -149,23 +155,47 @@ const OVERLAP_SERIES = [
  * Fetch all open markets for a single series_ticker.
  * Returns an empty array if the series has no active markets.
  */
-async function fetchSeriesMarkets(seriesTicker: string): Promise<Market[]> {
-  const url = `${KALSHI_API}/markets?status=open&mve_filter=exclude&limit=100&series_ticker=${seriesTicker}`;
+async function fetchSeriesMarkets(
+  seriesTicker: string,
+  maxPages: number
+): Promise<{ markets: Market[]; complete: boolean }> {
+  const allMarkets: Market[] = [];
+  let cursor: string | undefined;
+  let complete = false;
 
   try {
-    const data = await fetchKalshiPage(url);
-    const markets = data.markets
-      .filter(isSimpleMarket)
-      .map(toMarket)
-      .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
+    for (let page = 0; page < maxPages; page++) {
+      if (page > 0) await sleep(INTER_PAGE_DELAY_MS);
 
-    if (markets.length > 0) {
-      console.log(`[Kalshi] ${seriesTicker}: ${markets.length} markets`);
+      const params = new URLSearchParams({
+        status: 'open',
+        mve_filter: 'exclude',
+        limit: '100',
+        series_ticker: seriesTicker,
+      });
+      if (cursor) params.set('cursor', cursor);
+
+      const data = await fetchKalshiPage(`${KALSHI_API}/markets?${params.toString()}`);
+      const markets = data.markets
+        .filter(isSimpleMarket)
+        .map(toMarket)
+        .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
+
+      allMarkets.push(...markets);
+      if (!data.cursor) {
+        complete = true;
+        break;
+      }
+      cursor = data.cursor;
     }
-    return markets;
+
+    if (allMarkets.length > 0) {
+      console.log(`[Kalshi] ${seriesTicker}: ${allMarkets.length} markets`);
+    }
+    return { markets: allMarkets, complete };
   } catch (error) {
     console.warn(`[Kalshi] ${seriesTicker} fetch failed: ${(error as Error).message}`);
-    return [];
+    return { markets: [], complete: false };
   }
 }
 
@@ -178,34 +208,56 @@ async function fetchSeriesMarkets(seriesTicker: string): Promise<Market[]> {
  * Keeps 500ms delay between series fetches and a 60-second result cache.
  */
 export async function fetchKalshiMarkets(
-  _targetSimpleCount = 400,
-  _maxPages = 15,
+  targetSimpleCount = 400,
+  maxPages = 15,
 ): Promise<Market[]> {
   // Return cached result if still fresh
-  if (kalshiCache && (Date.now() - kalshiCache.fetchedAt) < KALSHI_CACHE_TTL_MS) {
+  if (
+    kalshiCache &&
+    (Date.now() - kalshiCache.fetchedAt) < KALSHI_CACHE_TTL_MS &&
+    (
+      kalshiCache.complete ||
+      (kalshiCache.targetSimpleCount >= targetSimpleCount && kalshiCache.maxPages >= maxPages)
+    )
+  ) {
     console.log(`[Kalshi] Returning cached ${kalshiCache.markets.length} markets (age: ${Date.now() - kalshiCache.fetchedAt}ms)`);
-    return kalshiCache.markets;
+    return kalshiCache.markets.slice(0, targetSimpleCount);
   }
 
   const seen = new Set<string>(); // deduplicate by ticker
   const allMarkets: Market[] = [];
+  let complete = true;
 
   for (let i = 0; i < OVERLAP_SERIES.length; i++) {
     if (i > 0) await sleep(INTER_PAGE_DELAY_MS);
 
-    const markets = await fetchSeriesMarkets(OVERLAP_SERIES[i]);
-    for (const m of markets) {
+    const result = await fetchSeriesMarkets(OVERLAP_SERIES[i], maxPages);
+    if (!result.complete) complete = false;
+
+    for (const m of result.markets) {
       if (!seen.has(m.id)) {
         seen.add(m.id);
         allMarkets.push(m);
       }
     }
+
+    if (allMarkets.length >= targetSimpleCount) {
+      complete = false;
+      break;
+    }
   }
 
   console.log(`[Kalshi] Fetched ${allMarkets.length} targeted markets across ${OVERLAP_SERIES.length} series`);
 
-  kalshiCache = { markets: allMarkets, fetchedAt: Date.now() };
-  return allMarkets;
+  const selectedMarkets = allMarkets.slice(0, targetSimpleCount);
+  kalshiCache = {
+    markets: selectedMarkets,
+    fetchedAt: Date.now(),
+    targetSimpleCount,
+    maxPages,
+    complete,
+  };
+  return selectedMarkets;
 }
 
 /** Map a raw Kalshi market object to our Market interface */
@@ -217,11 +269,18 @@ function toMarket(km: KalshiMarket): Market {
 
   // Prefer the _dollars variant (already 0–1); fall back to /100 conversion
   let yesPrice: number;
-  if (yesBidDollars != null && yesAskDollars != null && yesAskDollars > 0) {
+  if (
+    yesBidDollars != null &&
+    yesAskDollars != null &&
+    Number.isFinite(yesBidDollars) &&
+    Number.isFinite(yesAskDollars) &&
+    yesBidDollars > 0 &&
+    yesAskDollars > 0
+  ) {
     yesPrice = (yesBidDollars + yesAskDollars) / 2;
-  } else if (km.yes_bid != null && km.yes_ask != null && km.yes_ask > 0) {
+  } else if (Number.isFinite(km.yes_bid) && Number.isFinite(km.yes_ask) && km.yes_bid > 0 && km.yes_ask > 0) {
     yesPrice = ((km.yes_bid + km.yes_ask) / 2) / 100;
-  } else if (lastPriceDollars != null && lastPriceDollars > 0) {
+  } else if (lastPriceDollars != null && Number.isFinite(lastPriceDollars) && lastPriceDollars > 0) {
     yesPrice = lastPriceDollars;
   } else if (km.last_price != null && km.last_price > 0) {
     yesPrice = km.last_price / 100;

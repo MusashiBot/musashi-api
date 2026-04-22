@@ -60,15 +60,17 @@ function withTimeout<T>(
   timeoutMs: number,
   sourceName: string
 ): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
-        timeoutMs
-      )
-    ),
-  ]);
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const timer = new Promise<T>((_, reject) => {
+    handle = setTimeout(
+      () => reject(new Error(`${sourceName} request timeout after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+
+  return Promise.race([promise, timer]).finally(() => {
+    if (handle) clearTimeout(handle);
+  });
 }
 
 /**

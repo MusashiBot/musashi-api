@@ -3,6 +3,7 @@ import test from 'node:test';
 import { detectArbitrage } from '../src/api/arbitrage-detector';
 import { generateSignal } from '../src/analysis/signal-generator';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
+import { fetchKalshiMarkets } from '../src/api/kalshi-client';
 import type { Market, MarketMatch } from '../src/types/market';
 import groundProbabilityHandler from '../api/ground-probability';
 import feedHandler from '../api/feed';
@@ -107,6 +108,24 @@ test('neutral sentiment does not create directional edge', () => {
   assert.equal(signal.suggested_action?.confidence, 0);
 });
 
+test('directional action follows implied price gap, not sentiment label', () => {
+  const matchedMarket = market({
+    yesPrice: 0.05,
+    noPrice: 0.95,
+  });
+  const match: MarketMatch = {
+    market: matchedMarket,
+    confidence: 1,
+    matchedKeywords: ['bitcoin'],
+  };
+
+  const signal = generateSignal('Bitcoin could fall and drop but still win this level.', [match]);
+
+  assert.equal(signal.sentiment?.sentiment, 'bearish');
+  assert.equal(signal.suggested_action?.direction, 'YES');
+  assert.ok((signal.suggested_action?.edge ?? 0) >= 0.1);
+});
+
 test('entity-only keyword matches can pass when more than one entity matches', () => {
   const matcher = new KeywordMatcher([
     market({
@@ -138,6 +157,31 @@ test('ground-probability rejects non-string claim without throwing', async () =>
     success: false,
     error: 'Missing or invalid "claim" field. Must be a non-empty string.',
   });
+});
+
+test('feed rejects expired or invalid cursors', async () => {
+  const originalGet = kv.get;
+
+  try {
+    kv.get = async (key: string) => {
+      if (key === 'feed:latest') return ['t1'] as any;
+      return null;
+    };
+
+    const res = responseRecorder();
+    await feedHandler({
+      method: 'GET',
+      query: { limit: '1', cursor: 'missing' },
+    } as any, res as any);
+
+    assert.equal(res.statusCode, 410);
+    assert.deepEqual(res.body, {
+      success: false,
+      error: 'Cursor expired or invalid. Restart pagination from the beginning.',
+    });
+  } finally {
+    kv.get = originalGet;
+  }
 });
 
 test('feed stale fallback cache key includes cursor and since', async () => {
@@ -219,5 +263,63 @@ test('feed stale fallback cache key includes cursor and since', async () => {
     kv.set = originalSet;
     kv.del = originalDel;
     kv.scanIterator = originalScanIterator;
+  }
+});
+
+test('kalshi targeted fetch paginates and ignores zero bid midpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+
+  const kalshiMarket = (ticker: string, overrides: Record<string, unknown> = {}) => ({
+    ticker,
+    event_ticker: 'KXBTC-26FEB1708',
+    series_ticker: 'KXBTC',
+    title: `Will Bitcoin be above $${ticker.endsWith('1') ? '100K' : '120K'} in 2026?`,
+    yes_bid: 30,
+    yes_ask: 40,
+    no_bid: 60,
+    no_ask: 70,
+    volume: 100,
+    volume_24h: 50,
+    ...overrides,
+  });
+
+  try {
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+
+      if (url.includes('series_ticker=KXBTC') && !url.includes('cursor=')) {
+        return new Response(JSON.stringify({
+          markets: [
+            kalshiMarket('KXBTC-TEST1', {
+              yes_bid: 0,
+              yes_ask: 40,
+              yes_bid_dollars: '0',
+              yes_ask_dollars: '0.40',
+              last_price: 70,
+              last_price_dollars: '0.70',
+            }),
+          ],
+          cursor: 'page-2',
+        }), { status: 200 });
+      }
+
+      if (url.includes('series_ticker=KXBTC') && url.includes('cursor=page-2')) {
+        return new Response(JSON.stringify({
+          markets: [kalshiMarket('KXBTC-TEST2')],
+        }), { status: 200 });
+      }
+
+      return new Response(JSON.stringify({ markets: [] }), { status: 200 });
+    };
+
+    const markets = await fetchKalshiMarkets(2, 2);
+
+    assert.equal(markets.length, 2);
+    assert.ok(requests.some(url => url.includes('cursor=page-2')));
+    assert.equal(markets.find(m => m.id === 'kalshi-KXBTC-TEST1')?.yesPrice, 0.7);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

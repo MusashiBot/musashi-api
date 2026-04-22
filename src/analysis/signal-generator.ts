@@ -183,8 +183,7 @@ function generateSuggestedAction(
   market: Market,
   sentiment: SentimentResult,
   edge: number,
-  urgency: UrgencyLevel,
-  matchConfidence: number = 0
+  urgency: UrgencyLevel
 ): SuggestedAction {
   // Don't suggest action if edge is too low
   if (edge < 0.10) {
@@ -203,37 +202,17 @@ function generateSuggestedAction(
   let reasoning: string;
 
   if (sentiment.sentiment === 'neutral') {
-    // Neutral sentiment (e.g. factual news): use price gap + match confidence as the signal
-    if (impliedProb > currentPrice) {
-      direction = 'YES';
-      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES underpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
-    } else if (impliedProb < currentPrice) {
-      direction = 'NO';
-      reasoning = `Match confidence ${(matchConfidence * 100).toFixed(0)}%: YES overpriced at ${(currentPrice * 100).toFixed(0)}¢ vs neutral implied ${(impliedProb * 100).toFixed(0)}¢`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Neutral sentiment with no significant price gap';
-    }
-  } else if (sentiment.sentiment === 'bullish') {
-    // Bullish sentiment
-    if (impliedProb > currentPrice) {
-      // YES is underpriced
-      direction = 'YES';
-      reasoning = `Bullish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bullish sentiment but YES already priced high';
-    }
+    direction = 'HOLD';
+    reasoning = 'Neutral sentiment, no clear directional bias';
+  } else if (impliedProb > currentPrice) {
+    direction = 'YES';
+    reasoning = `${sentiment.sentiment === 'bullish' ? 'Bullish' : 'Mildly bearish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is underpriced at ${(currentPrice * 100).toFixed(0)}%`;
+  } else if (impliedProb < currentPrice) {
+    direction = 'NO';
+    reasoning = `${sentiment.sentiment === 'bearish' ? 'Bearish' : 'Mildly bullish'} sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
   } else {
-    // Bearish sentiment
-    if (impliedProb < currentPrice) {
-      // YES is overpriced, buy NO
-      direction = 'NO';
-      reasoning = `Bearish sentiment (${(sentiment.confidence * 100).toFixed(0)}% confidence) suggests YES is overpriced at ${(currentPrice * 100).toFixed(0)}%`;
-    } else {
-      direction = 'HOLD';
-      reasoning = 'Bearish sentiment but YES already priced low';
-    }
+    direction = 'HOLD';
+    reasoning = 'Implied probability matches current price, no edge';
   }
 
   // Confidence based on edge and urgency
@@ -311,7 +290,7 @@ export function generateSignal(
   const signal_type = computeSignalType(tweetText, sentiment, edge, !!arbitrageOpportunity);
 
   // Generate suggested action
-  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency, topMatch.confidence);
+  const suggested_action = generateSuggestedAction(topMarket, sentiment, edge, urgency);
 
   return {
     event_id: generateEventId(tweetText),
