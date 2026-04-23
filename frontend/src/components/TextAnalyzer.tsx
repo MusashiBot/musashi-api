@@ -31,55 +31,54 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({ onAnalyze }) => {
   };
 
   return (
-    <div className="card p-4">
-      <h3 className="font-semibold mb-4 text-gray-900 dark:text-gray-50">Analyze Text</h3>
+    <section className="card p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3>Analyze Text</h3>
+        <span className="terminal-panel-kicker">POST</span>
+      </div>
 
       <div className="space-y-3">
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Enter a tweet, news snippet, or market claim..."
-          className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500"
+          onChange={(event) => setText(event.target.value)}
+          placeholder="Paste tweet, news, or market claim..."
+          className="terminal-input min-h-[112px] resize-y text-[12px] leading-6"
           rows={4}
         />
 
         <button
           onClick={handleAnalyze}
           disabled={loading}
-          className="w-full py-2 px-4 bg-gray-700 hover:bg-gray-800 disabled:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-700 text-white rounded-lg font-medium transition"
+          className="terminal-button w-full"
         >
-          {loading ? 'Analyzing...' : 'Analyze'}
+          {loading ? '[RUNNING] ANALYZE' : '[ENTER] ANALYZE'}
         </button>
 
         {error && (
-          <div className="p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded-lg text-sm">
+          <div className="terminal-error-message p-3 text-sm">
             {error}
           </div>
         )}
 
         {result && (
-          <div className="p-3 bg-gray-200 dark:bg-gray-800 rounded-lg text-sm space-y-2">
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Type:</span>
-              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{result.signal_type}</span>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Urgency:</span>
-              <span className={`ml-2 font-medium ${
-                result.urgency === 'critical' ? 'text-red-600 dark:text-red-500' :
-                result.urgency === 'high' ? 'text-yellow-600 dark:text-yellow-500' :
-                'text-green-600 dark:text-green-500'
-              }`}>
+          <div className="border border-[var(--border-primary)] bg-black/30 p-3 text-sm">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <span className="terminal-muted">Type</span>
+              <span className="text-[var(--text-primary)]">{result.signal_type}</span>
+              <span className="terminal-muted">Urgency</span>
+              <span className={
+                result.urgency === 'critical' || result.urgency === 'high'
+                  ? 'terminal-warning'
+                  : 'terminal-positive'
+              }>
                 {result.urgency}
               </span>
-            </div>
-            <div>
-              <span className="text-gray-600 dark:text-gray-400">Matches:</span>
-              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{result.data.markets.length}</span>
+              <span className="terminal-muted">Matches</span>
+              <span className="text-[var(--text-primary)]">{result.data.markets.length}</span>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 };

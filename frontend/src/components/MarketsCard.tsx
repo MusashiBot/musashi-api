@@ -7,90 +7,96 @@ interface MarketsCardProps {
   error: string | null;
 }
 
+const formatVolume = (volume: number) => {
+  if (volume >= 1_000_000) {
+    return `$${(volume / 1_000_000).toFixed(1)}M`;
+  }
+
+  if (volume >= 1_000) {
+    return `$${(volume / 1_000).toFixed(0)}K`;
+  }
+
+  return `$${volume.toFixed(0)}`;
+};
+
 export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }) => {
   if (error) {
     return (
-      <div className="card p-4 border-red-300 dark:border-red-800">
-        <h3 className="font-semibold mb-2">Active Markets</h3>
-        <div className="text-red-600 dark:text-red-400 text-sm">{error}</div>
-      </div>
+      <section id="terminal-markets" className="card terminal-anchor p-4 border-red-900/60">
+        <h3 className="mb-2">Market Feed</h3>
+        <div className="text-sm text-[var(--accent-red)]">{error}</div>
+      </section>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="card p-4">
-        <h3 className="font-semibold mb-4">Active Markets</h3>
-        <div className="space-y-2 animate-pulse">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const topMarkets = data?.slice(0, 5) || [];
-  const polymarketCount = data?.filter(m => m.platform === 'polymarket').length || 0;
-  const kalshiCount = data?.filter(m => m.platform === 'kalshi').length || 0;
+  const topMarkets = data?.slice(0, 8) || [];
+  const polymarketCount = data?.filter(market => market.platform === 'polymarket').length || 0;
+  const kalshiCount = data?.filter(market => market.platform === 'kalshi').length || 0;
 
   return (
-    <div className="card p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="font-semibold text-gray-900 dark:text-gray-50">Active Markets</h3>
-        <div className="flex gap-2 text-xs">
-          <div className="px-2 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
-            Polymarket: {polymarketCount}
-          </div>
-          <div className="px-2 py-1 bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 rounded">
-            Kalshi: {kalshiCount}
-          </div>
+    <section id="terminal-markets" className="card terminal-anchor">
+      <div className="flex flex-col gap-3 border-b border-[var(--border-primary)] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3>Market Feed</h3>
+          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">matched from live social and market scans</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px] uppercase">
+          <span className="badge badge-info">POLY {polymarketCount}</span>
+          <span className="badge badge-info">KALSHI {kalshiCount}</span>
+          {loading && <span className="badge badge-warning">SYNCING</span>}
         </div>
       </div>
 
-      <div className="space-y-2">
-        {topMarkets.length === 0 ? (
-          <p className="text-gray-500 dark:text-gray-400 text-sm">No markets loaded</p>
-        ) : (
-          topMarkets.map((market) => (
-            <div key={market.id} className="p-2 rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
-              <div className="flex justify-between items-start mb-1">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">
-                  {market.title}
-                </p>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                  market.platform === 'polymarket'
-                    ? 'bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                    : 'bg-gray-400 dark:bg-gray-600 text-gray-800 dark:text-gray-200'
-                }`}>
-                  {market.platform}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <div className="flex gap-3 text-xs">
-                  <div>
-                    <span className="text-gray-600 dark:text-gray-400">YES:</span>
-                    <span className="ml-1 font-semibold text-gray-900 dark:text-gray-100">{(market.yesPrice * 100).toFixed(0)}¢</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600 dark:text-gray-400">24h Vol:</span>
-                    <span className="ml-1 font-semibold text-gray-900 dark:text-gray-100">${(market.volume24h / 1000).toFixed(0)}k</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {topMarkets.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-700">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Total: {data?.length || 0} markets • Last updated: {data?.[0]?.lastUpdated && new Date(data[0].lastUpdated).toLocaleTimeString()}
-          </p>
+      {loading && topMarkets.length === 0 ? (
+        <div className="space-y-2 p-4">
+          {[...Array(5)].map((_, index) => (
+            <div key={index} className="h-8 animate-pulse bg-[var(--bg-tertiary)]"></div>
+          ))}
+        </div>
+      ) : topMarkets.length === 0 ? (
+        <p className="p-4 text-sm text-[var(--text-tertiary)]">No markets loaded</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="terminal-table">
+            <thead>
+              <tr>
+                <th className="w-[52%]">Market</th>
+                <th>Yes</th>
+                <th>Volume</th>
+                <th>Source</th>
+                <th>Sync</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topMarkets.map(market => (
+                <tr key={market.id} className="terminal-row">
+                  <td>
+                    <a
+                      className="line-clamp-2 text-[var(--text-primary)] transition hover:text-[var(--accent-blue)]"
+                      href={market.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {market.title}
+                    </a>
+                    <div className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">{market.category || 'general'}</div>
+                  </td>
+                  <td className={market.yesPrice >= 0.5 ? 'terminal-positive' : 'terminal-warning'}>
+                    {(market.yesPrice * 100).toFixed(1)}¢
+                  </td>
+                  <td>{formatVolume(market.volume24h)}</td>
+                  <td>
+                    <span className="badge badge-info">{market.platform}</span>
+                  </td>
+                  <td className="text-[var(--text-tertiary)]">
+                    {market.lastUpdated ? new Date(market.lastUpdated).toLocaleTimeString() : '--:--:--'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-    </div>
+    </section>
   );
 };

@@ -54,68 +54,62 @@ export const WalletPanel: React.FC = () => {
   const totalValue = positions?.reduce((sum, position) => sum + (position.currentValue || 0), 0) || 0;
 
   return (
-    <section className="card p-6 mb-8">
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
+    <section id="terminal-wallet" className="terminal-panel terminal-anchor mt-8">
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h3 className="font-semibold text-gray-900 dark:text-gray-50 text-lg">Wallet Intelligence</h3>
-          {lastQueried && (
-            <p className="text-xs font-mono text-gray-500 dark:text-gray-400 mt-1">
-              {lastQueried.slice(0, 8)}...{lastQueried.slice(-6)}
-            </p>
-          )}
+          <h2 className="terminal-panel-title">Wallet Intelligence</h2>
+          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">
+            {lastQueried ? `${lastQueried.slice(0, 8)}...${lastQueried.slice(-6)}` : 'load polymarket positions and activity'}
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3 lg:w-[680px]">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 lg:w-[720px] sm:flex-row">
           <input
             value={wallet}
             onChange={(event) => setWallet(event.target.value)}
             placeholder="0x wallet address"
-            className="min-w-0 flex-1 p-3 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 font-mono text-sm"
+            className="terminal-input min-w-0 flex-1 text-sm"
           />
           <button
             type="submit"
             disabled={loading}
-            className="px-5 py-3 bg-gray-700 hover:bg-gray-800 disabled:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-700 text-white rounded-lg font-medium transition"
+            className="terminal-button"
           >
-            {loading ? 'Loading...' : 'Analyze Wallet'}
+            {loading ? '[RUNNING] LOAD' : '[ENTER] ANALYZE WALLET'}
           </button>
         </form>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded-lg text-sm">
+        <div className="terminal-error-message mb-4 p-3 text-sm">
           {error}
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
-          <div className="p-4 rounded-lg border border-gray-300 dark:border-gray-700 h-full">
-            <p className="text-sm text-gray-600 dark:text-gray-400">Positions</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-2">
-              {positions?.length || 0}
-            </p>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-4">Current Value</p>
-            <p className="text-2xl font-bold text-green-600 dark:text-green-500">
-              ${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            </p>
-          </div>
+      <div className="grid grid-cols-1 gap-px bg-[var(--border-primary)] lg:grid-cols-[260px_1fr_1fr]">
+        <div className="bg-[var(--bg-primary)] p-4">
+          <p className="text-[10px] uppercase text-[var(--text-tertiary)]">Positions</p>
+          <p className="mt-2 text-4xl font-black text-[var(--accent-blue)]">{positions?.length || 0}</p>
+          <p className="mt-5 text-[10px] uppercase text-[var(--text-tertiary)]">Current Value</p>
+          <p className="mt-2 text-2xl font-bold text-[var(--accent-green)]">
+            ${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </p>
         </div>
 
-        <div>
-          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Positions</h4>
-          <div className="space-y-3">
+        <div className="bg-[var(--bg-primary)] p-4">
+          <h3 className="mb-3">Positions</h3>
+          <div className="divide-y divide-[var(--border-primary)]">
             {!positions || positions.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-400 text-sm">No positions loaded</p>
+              <p className="text-sm text-[var(--text-tertiary)]">No positions loaded</p>
             ) : (
-              positions.slice(0, 5).map((position) => (
-                <div key={`${position.marketId || position.tokenId}-${position.outcome}`} className="p-3 rounded-lg border border-gray-300 dark:border-gray-700">
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">
-                    {position.marketTitle}
-                  </p>
-                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mt-2">
-                    <span>{position.outcome}</span>
-                    <span>{position.currentValue ? `$${position.currentValue.toFixed(2)}` : `${position.quantity.toFixed(2)} shares`}</span>
+              positions.slice(0, 5).map(position => (
+                <div key={`${position.marketId || position.tokenId}-${position.outcome}`} className="py-3">
+                  <p className="line-clamp-2 text-sm text-[var(--text-primary)]">{position.marketTitle}</p>
+                  <div className="mt-2 flex justify-between gap-4 text-xs">
+                    <span className="terminal-muted">{position.outcome}</span>
+                    <span className="text-[var(--accent-green)]">
+                      {position.currentValue ? `$${position.currentValue.toFixed(2)}` : `${position.quantity.toFixed(2)} shares`}
+                    </span>
                   </div>
                 </div>
               ))
@@ -123,27 +117,25 @@ export const WalletPanel: React.FC = () => {
           </div>
         </div>
 
-        <div>
-          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Activity</h4>
-          <div className="space-y-3">
+        <div className="bg-[var(--bg-primary)] p-4">
+          <h3 className="mb-3">Activity</h3>
+          <div className="divide-y divide-[var(--border-primary)]">
             {!activity || activity.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-400 text-sm">No activity loaded</p>
+              <p className="text-sm text-[var(--text-tertiary)]">No activity loaded</p>
             ) : (
               activity.slice(0, 5).map((item, index) => (
-                <div key={`${item.marketId || item.tokenId || item.timestamp}-${index}`} className="p-3 rounded-lg border border-gray-300 dark:border-gray-700">
+                <div key={`${item.marketId || item.tokenId || item.timestamp}-${index}`} className="py-3">
                   <div className="flex justify-between gap-3">
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">
-                      {item.marketTitle || item.activityType}
-                    </p>
+                    <p className="line-clamp-2 text-sm text-[var(--text-primary)]">{item.marketTitle || item.activityType}</p>
                     {item.side && (
-                      <span className={`text-xs font-semibold ${item.side === 'buy' ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'}`}>
+                      <span className={item.side === 'buy' ? 'terminal-positive text-xs font-bold' : 'terminal-negative text-xs font-bold'}>
                         {item.side.toUpperCase()}
                       </span>
                     )}
                   </div>
-                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mt-2">
-                    <span>{item.outcome || item.activityType}</span>
-                    <span>{new Date(item.timestamp).toLocaleDateString()}</span>
+                  <div className="mt-2 flex justify-between gap-4 text-xs">
+                    <span className="terminal-muted">{item.outcome || item.activityType}</span>
+                    <span className="terminal-muted">{new Date(item.timestamp).toLocaleDateString()}</span>
                   </div>
                 </div>
               ))
