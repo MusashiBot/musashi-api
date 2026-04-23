@@ -1,6 +1,5 @@
-import React, { useEffect } from 'react';
 import { useDarkMode, useFetch } from './hooks';
-import { getHealth, getArbitrage, Market, HealthStatus, ArbitrageOpportunity } from './api';
+import { getHealth, getArbitrage, Market, HealthStatus, ArbitrageResponse } from './api';
 import { Header, HealthCard, MarketsCard, ArbitrageCard, TextAnalyzer } from './components';
 
 const mockMarkets: Market[] = [
@@ -68,24 +67,16 @@ const mockMarkets: Market[] = [
 
 function App() {
   const { isDark, toggle: toggleDark } = useDarkMode();
-  
+
   const healthData = useFetch<HealthStatus>(
     () => getHealth(),
     10000 // Refresh every 10 seconds
   );
 
-  const arbitrageData = useFetch<ArbitrageOpportunity[]>(
+  const arbitrageData = useFetch<ArbitrageResponse>(
     () => getArbitrage(0.03),
     30000 // Refresh every 30 seconds
   );
-
-  // Initialize dark mode from localStorage
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-      toggleDark();
-    }
-  }, []);
 
   return (
     <div className={isDark ? 'dark' : ''}>
@@ -97,8 +88,8 @@ function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {/* Health Status */}
             <div className="lg:col-span-2">
-              <HealthCard 
-                data={healthData.data?.data}
+              <HealthCard
+                data={healthData.data}
                 loading={healthData.loading}
                 error={healthData.error}
               />
@@ -111,13 +102,13 @@ function App() {
                 <div>
                   <p className="text-gray-600 dark:text-gray-400">Total Markets</p>
                   <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">
-                    {healthData.data?.data?.services?.polymarket?.markets || 0} + {healthData.data?.data?.services?.kalshi?.markets || 0}
+                    {healthData.data?.services?.polymarket?.markets || 0} + {healthData.data?.services?.kalshi?.markets || 0}
                   </p>
                 </div>
                 <div>
                   <p className="text-gray-600 dark:text-gray-400">Arbitrage</p>
                   <p className="text-2xl font-bold text-green-600 dark:text-green-500">
-                    {arbitrageData.data?.length || 0}
+                    {arbitrageData.data?.count || 0}
                   </p>
                 </div>
               </div>
@@ -130,7 +121,7 @@ function App() {
                 <div>
                   <p className="text-gray-600 dark:text-gray-400">Health Check</p>
                   <p className="text-xs font-mono text-green-600 dark:text-green-500">
-                    {healthData.data?.timestamp ? new Date(healthData.data.timestamp).toLocaleTimeString() : '—'}
+                    {healthData.data?.timestamp ? new Date(healthData.data.timestamp).toLocaleTimeString() : '-'}
                   </p>
                 </div>
                 <div>
@@ -154,7 +145,7 @@ function App() {
               />
 
               <ArbitrageCard
-                data={arbitrageData.data?.data}
+                data={arbitrageData.data?.opportunities || null}
                 loading={arbitrageData.loading}
                 error={arbitrageData.error}
               />

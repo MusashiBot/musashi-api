@@ -10,7 +10,28 @@ export const apiClient = axios.create({
   },
 });
 
-// Types
+interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  error?: string;
+}
+
+async function unwrapApiData<T>(request: Promise<{ data: ApiEnvelope<T> }>): Promise<T> {
+  const response = await request;
+  if (!response.data.success) {
+    throw new Error(response.data.error || 'API request failed');
+  }
+  return response.data.data;
+}
+
+async function unwrapAnalyzeText(request: Promise<{ data: AnalyzeTextResponse }>): Promise<AnalyzeTextResponse> {
+  const response = await request;
+  if (!response.data.success) {
+    throw new Error(response.data.error || 'Text analysis failed');
+  }
+  return response.data;
+}
+
 export interface Market {
   id: string;
   platform: 'polymarket' | 'kalshi';
@@ -70,6 +91,48 @@ export interface HealthStatus {
   response_time_ms: number;
 }
 
+export interface ArbitrageResponse {
+  opportunities: ArbitrageOpportunity[];
+  count: number;
+  timestamp: string;
+  filters: {
+    minSpread: number;
+    minConfidence: number;
+    limit: number;
+    category: string | null;
+  };
+  metadata: {
+    processing_time_ms: number;
+    markets_analyzed: number;
+    polymarket_count: number;
+    kalshi_count: number;
+  };
+}
+
+export interface AnalyzeTextData {
+  markets: MarketMatch[];
+  matchCount: number;
+  timestamp: string;
+  suggested_action?: Signal['suggested_action'];
+  sentiment?: Signal['sentiment'];
+  arbitrage?: ArbitrageOpportunity;
+  metadata: {
+    processing_time_ms: number;
+    sources_checked: number;
+    markets_analyzed: number;
+    model_version: string;
+  };
+}
+
+export interface AnalyzeTextResponse {
+  event_id: string;
+  signal_type: Signal['signal_type'];
+  urgency: Signal['urgency'];
+  success: boolean;
+  data: AnalyzeTextData;
+  error?: string;
+}
+
 export interface FeedData {
   tweets: Array<{
     id: string;
@@ -83,18 +146,17 @@ export interface FeedData {
   timestamp: string;
 }
 
-// API functions
 export const analyzeText = (text: string, minConfidence = 0.3) =>
-  apiClient.post('/analyze-text', { text, minConfidence });
+  unwrapAnalyzeText(apiClient.post<AnalyzeTextResponse>('/analyze-text', { text, minConfidence }));
 
 export const getArbitrage = (minSpread = 0.03) =>
-  apiClient.get(`/markets/arbitrage?minSpread=${minSpread}`);
+  unwrapApiData<ArbitrageResponse>(apiClient.get(`/markets/arbitrage?minSpread=${minSpread}`));
 
 export const getMovers = () =>
-  apiClient.get('/markets/movers');
+  unwrapApiData(apiClient.get('/markets/movers'));
 
 export const getFeed = (limit = 20) =>
-  apiClient.get(`/feed?limit=${limit}`);
+  unwrapApiData<FeedData>(apiClient.get(`/feed?limit=${limit}`));
 
 export const getHealth = () =>
-  apiClient.get('/health');
+  unwrapApiData<HealthStatus>(apiClient.get('/health'));

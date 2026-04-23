@@ -25,7 +25,7 @@ export class MusashiWebSocket {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 3000;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private state: WSConnectionState = {
     connected: false,
     connecting: false,
@@ -33,7 +33,7 @@ export class MusashiWebSocket {
     lastUpdate: 0,
   };
   private stateListeners: Set<(state: WSConnectionState) => void> = new Set();
-  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(baseUrl: string = 'ws://127.0.0.1:3000') {
     this.url = baseUrl.replace(/^https?/, 'ws');

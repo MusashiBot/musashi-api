@@ -30,12 +30,12 @@ export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, err
     );
   }
 
-  const arbitrageList = Array.isArray(data) ? data : (data?.data as any) || [];
+  const arbitrageList = data || [];
 
   return (
     <div className="card p-4">
       <h3 className="font-semibold mb-4">Arbitrage Opportunities</h3>
-      
+
       {!arbitrageList || arbitrageList.length === 0 ? (
         <p className="text-gray-500 dark:text-gray-400 text-sm">No arbitrage opportunities found</p>
       ) : (

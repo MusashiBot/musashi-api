@@ -8,7 +8,7 @@ interface FetchState<T> {
 }
 
 export function useFetch<T>(
-  fetchFn: () => Promise<{ data: T }>,
+  fetchFn: () => Promise<T>,
   interval?: number
 ): FetchState<T> {
   const [data, setData] = useState<T | null>(null);
@@ -18,8 +18,8 @@ export function useFetch<T>(
   const execute = async () => {
     try {
       setLoading(true);
-      const response = await fetchFn();
-      setData(response.data);
+      const result = await fetchFn();
+      setData(result);
       setError(null);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch data');

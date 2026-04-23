@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import { analyzeText } from '../api';
+import { AnalyzeTextResponse, analyzeText } from '../api';
 
 interface TextAnalyzerProps {
-  onAnalyze?: (result: any) => void;
+  onAnalyze?: (result: AnalyzeTextResponse) => void;
 }
 
 export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({ onAnalyze }) => {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<AnalyzeTextResponse | null>(null);
 
   const handleAnalyze = async () => {
     if (!text.trim()) {
@@ -21,10 +21,10 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({ onAnalyze }) => {
       setLoading(true);
       setError(null);
       const response = await analyzeText(text);
-      setResult(response.data);
-      onAnalyze?.(response.data);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to analyze text');
+      setResult(response);
+      onAnalyze?.(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to analyze text');
     } finally {
       setLoading(false);
     }
@@ -61,21 +61,21 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({ onAnalyze }) => {
           <div className="p-3 bg-gray-200 dark:bg-gray-800 rounded-lg text-sm space-y-2">
             <div>
               <span className="text-gray-600 dark:text-gray-400">Type:</span>
-              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{result.data?.signal_type || result.signal_type}</span>
+              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{result.signal_type}</span>
             </div>
             <div>
               <span className="text-gray-600 dark:text-gray-400">Urgency:</span>
               <span className={`ml-2 font-medium ${
-                (result.data?.urgency || result.urgency) === 'critical' ? 'text-red-600 dark:text-red-500' :
-                (result.data?.urgency || result.urgency) === 'high' ? 'text-yellow-600 dark:text-yellow-500' :
+                result.urgency === 'critical' ? 'text-red-600 dark:text-red-500' :
+                result.urgency === 'high' ? 'text-yellow-600 dark:text-yellow-500' :
                 'text-green-600 dark:text-green-500'
               }`}>
-                {result.data?.urgency || result.urgency}
+                {result.urgency}
               </span>
             </div>
             <div>
               <span className="text-gray-600 dark:text-gray-400">Matches:</span>
-              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{(result.data?.data?.markets || result.matches)?.length || 0}</span>
+              <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">{result.data.markets.length}</span>
             </div>
           </div>
         )}

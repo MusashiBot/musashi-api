@@ -84,7 +84,7 @@ The Musashi dashboard displays:
 
 ## Running Both API and Frontend Together
 
-From the root directory, if you have `concurrently` installed:
+From the root directory:
 
 ```bash
 pnpm dev:full

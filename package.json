@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.17.1",
   "scripts": {
     "dev": "node --import tsx scripts/local-api-server.ts",
-    "dev:full": "concurrently \"npm run dev\" \"npm run frontend:dev\"",
+    "dev:full": "concurrently \"pnpm dev\" \"pnpm frontend:dev\"",
     "local:api": "node --import tsx scripts/local-api-server.ts",
     "backend:dev": "node server/api-server.mjs",
     "frontend:dev": "cd frontend && pnpm dev",
@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
     "typescript": "^5.5.2"
   },
