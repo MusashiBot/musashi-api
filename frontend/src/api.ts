@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = '/api';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -135,15 +135,138 @@ export interface AnalyzeTextResponse {
 
 export interface FeedData {
   tweets: Array<{
-    id: string;
-    text: string;
-    created_at: string;
-    author: string;
+    tweet: {
+      id: string;
+      text: string;
+      created_at: string;
+      author: string;
+    };
     matches: MarketMatch[];
     urgency: string;
   }>;
   count: number;
   timestamp: string;
+}
+
+export interface MarketMover {
+  market: Market;
+  priceChange1h: number;
+  previousPrice: number;
+  currentPrice: number;
+  direction: 'up' | 'down';
+  timestamp: number;
+}
+
+export interface MoversResponse {
+  movers: MarketMover[];
+  count: number;
+  timestamp: string;
+  filters: {
+    minChange: number;
+    limit: number;
+    category: string | null;
+  };
+  metadata: {
+    processing_time_ms: number;
+    markets_analyzed: number;
+    markets_tracked: number;
+    storage: string;
+    history_retention: string;
+  };
+}
+
+export interface FeedStatsResponse {
+  timestamp: string;
+  last_collection: string;
+  tweets: {
+    last_1h: number;
+    last_6h: number;
+    last_24h: number;
+  };
+  by_category: Record<string, number>;
+  by_urgency: Record<string, number>;
+  top_markets: Array<{
+    market: Market;
+    mention_count: number;
+  }>;
+  metadata: {
+    processing_time_ms: number;
+    cached?: boolean;
+  };
+}
+
+export interface FeedAccountsResponse {
+  accounts: Array<{
+    username: string;
+    category: string;
+    priority: 'high' | 'medium';
+    description: string;
+  }>;
+  count: number;
+  by_category: Record<string, number>;
+  by_priority: {
+    high: number;
+    medium: number;
+  };
+  metadata: {
+    processing_time_ms: number;
+  };
+}
+
+export type WalletActivityType =
+  | 'trade'
+  | 'position_opened'
+  | 'position_increased'
+  | 'position_reduced'
+  | 'position_closed'
+  | 'redeemed'
+  | 'unknown';
+
+export interface WalletActivity {
+  wallet: string;
+  activityType: WalletActivityType;
+  platform: 'polymarket';
+  marketId?: string;
+  conditionId?: string;
+  tokenId?: string;
+  marketTitle?: string;
+  marketSlug?: string;
+  outcome?: string;
+  side?: 'buy' | 'sell';
+  price?: number;
+  size?: number;
+  value?: number;
+  timestamp: string;
+  url?: string;
+}
+
+export interface WalletPosition {
+  wallet: string;
+  platform: 'polymarket';
+  marketId?: string;
+  conditionId?: string;
+  tokenId?: string;
+  marketTitle: string;
+  marketSlug?: string;
+  outcome: string;
+  quantity: number;
+  averagePrice?: number;
+  currentPrice?: number;
+  currentValue?: number;
+  realizedPnl?: number;
+  unrealizedPnl?: number;
+  url?: string;
+  updatedAt: string;
+}
+
+export interface WalletPositionsResponse {
+  positions: WalletPosition[];
+  count: number;
+}
+
+export interface WalletActivityResponse {
+  activity: WalletActivity[];
+  count: number;
 }
 
 export const analyzeText = (text: string, minConfidence = 0.3) =>
@@ -152,11 +275,31 @@ export const analyzeText = (text: string, minConfidence = 0.3) =>
 export const getArbitrage = (minSpread = 0.03) =>
   unwrapApiData<ArbitrageResponse>(apiClient.get(`/markets/arbitrage?minSpread=${minSpread}`));
 
-export const getMovers = () =>
-  unwrapApiData(apiClient.get('/markets/movers'));
+export const getMovers = (minChange = 0.05, limit = 5) =>
+  unwrapApiData<MoversResponse>(apiClient.get(`/markets/movers?minChange=${minChange}&limit=${limit}`));
 
 export const getFeed = (limit = 20) =>
   unwrapApiData<FeedData>(apiClient.get(`/feed?limit=${limit}`));
 
+export const getFeedStats = () =>
+  unwrapApiData<FeedStatsResponse>(apiClient.get('/feed/stats'));
+
+export const getFeedAccounts = () =>
+  unwrapApiData<FeedAccountsResponse>(apiClient.get('/feed/accounts'));
+
+export const getWalletPositions = (wallet: string, limit = 20, minValue = 0) =>
+  unwrapApiData<WalletPositionsResponse>(
+    apiClient.get(`/wallet/positions?wallet=${encodeURIComponent(wallet)}&limit=${limit}&minValue=${minValue}`)
+  );
+
+export const getWalletActivity = (wallet: string, limit = 20) =>
+  unwrapApiData<WalletActivityResponse>(
+    apiClient.get(`/wallet/activity?wallet=${encodeURIComponent(wallet)}&limit=${limit}`)
+  );
+
 export const getHealth = () =>
-  unwrapApiData<HealthStatus>(apiClient.get('/health'));
+  unwrapApiData<HealthStatus>(
+    apiClient.get('/health', {
+      validateStatus: status => (status >= 200 && status < 300) || status === 503,
+    })
+  );

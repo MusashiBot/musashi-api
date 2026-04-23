@@ -1,69 +1,32 @@
+import { useMemo } from 'react';
 import { useDarkMode, useFetch } from './hooks';
-import { getHealth, getArbitrage, Market, HealthStatus, ArbitrageResponse } from './api';
-import { Header, HealthCard, MarketsCard, ArbitrageCard, TextAnalyzer } from './components';
-
-const mockMarkets: Market[] = [
-  {
-    id: 'poly-1',
-    platform: 'polymarket',
-    title: 'Will Bitcoin exceed $100k by end of 2026?',
-    description: 'Bitcoin price prediction',
-    yesPrice: 0.72,
-    noPrice: 0.28,
-    volume24h: 125000,
-    url: 'https://polymarket.com',
-    category: 'crypto',
-    lastUpdated: new Date().toISOString(),
-  },
-  {
-    id: 'kalshi-1',
-    platform: 'kalshi',
-    title: 'Will the Fed cut rates in May 2026?',
-    description: 'Federal Reserve interest rate prediction',
-    yesPrice: 0.45,
-    noPrice: 0.55,
-    volume24h: 89000,
-    url: 'https://kalshi.com',
-    category: 'economics',
-    lastUpdated: new Date().toISOString(),
-  },
-  {
-    id: 'poly-2',
-    platform: 'polymarket',
-    title: 'Will Ethereum 2.0 implementation succeed?',
-    description: 'Ethereum upgrade outcome',
-    yesPrice: 0.88,
-    noPrice: 0.12,
-    volume24h: 67000,
-    url: 'https://polymarket.com',
-    category: 'crypto',
-    lastUpdated: new Date().toISOString(),
-  },
-  {
-    id: 'kalshi-2',
-    platform: 'kalshi',
-    title: 'Will Apple stock price reach $200 by Q3 2026?',
-    description: 'Apple stock price prediction',
-    yesPrice: 0.61,
-    noPrice: 0.39,
-    volume24h: 156000,
-    url: 'https://kalshi.com',
-    category: 'stocks',
-    lastUpdated: new Date().toISOString(),
-  },
-  {
-    id: 'poly-3',
-    platform: 'polymarket',
-    title: 'Will AI regulation bill pass Congress by 2026?',
-    description: 'AI regulation legislation prediction',
-    yesPrice: 0.34,
-    noPrice: 0.66,
-    volume24h: 45000,
-    url: 'https://polymarket.com',
-    category: 'technology',
-    lastUpdated: new Date().toISOString(),
-  },
-];
+import {
+  getHealth,
+  getArbitrage,
+  getFeed,
+  getMovers,
+  getFeedStats,
+  getFeedAccounts,
+  API_BASE_URL,
+  Market,
+  HealthStatus,
+  ArbitrageResponse,
+  FeedData,
+  MoversResponse,
+  FeedStatsResponse,
+  FeedAccountsResponse,
+} from './api';
+import {
+  Header,
+  HealthCard,
+  MarketsCard,
+  ArbitrageCard,
+  TextAnalyzer,
+  MoversCard,
+  FeedStatsCard,
+  AccountsCard,
+  WalletPanel,
+} from './components';
 
 function App() {
   const { isDark, toggle: toggleDark } = useDarkMode();
@@ -78,10 +41,47 @@ function App() {
     30000 // Refresh every 30 seconds
   );
 
+  const feedData = useFetch<FeedData>(
+    () => getFeed(20),
+    30000 // Refresh every 30 seconds
+  );
+
+  const moversData = useFetch<MoversResponse>(
+    () => getMovers(0.05, 5),
+    60000 // Refresh every 60 seconds
+  );
+
+  const feedStatsData = useFetch<FeedStatsResponse>(
+    () => getFeedStats(),
+    60000 // Refresh every 60 seconds
+  );
+
+  const feedAccountsData = useFetch<FeedAccountsResponse>(
+    () => getFeedAccounts(),
+    300000 // Refresh every 5 minutes
+  );
+
+  const activeMarkets = useMemo(() => {
+    const marketsById = new Map<string, Market>();
+
+    feedData.data?.tweets.forEach(tweet => {
+      tweet.matches.forEach(match => {
+        marketsById.set(match.market.id, match.market);
+      });
+    });
+
+    return Array.from(marketsById.values());
+  }, [feedData.data]);
+
   return (
     <div className={isDark ? 'dark' : ''}>
       <div className="min-h-screen bg-white dark:bg-black text-gray-900 dark:text-gray-50">
-        <Header isDark={isDark} onToggleDark={toggleDark} />
+        <Header
+          isDark={isDark}
+          onToggleDark={toggleDark}
+          apiStatus={healthData.data?.status}
+          apiLoading={healthData.loading && !healthData.data}
+        />
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Top Row: Status & Key Metrics */}
@@ -139,9 +139,9 @@ function App() {
             {/* Left Column: Markets & Arbitrage */}
             <div className="lg:col-span-2 space-y-6">
               <MarketsCard
-                data={mockMarkets}
-                loading={false}
-                error={null}
+                data={activeMarkets}
+                loading={feedData.loading}
+                error={feedData.error}
               />
 
               <ArbitrageCard
@@ -149,13 +149,33 @@ function App() {
                 loading={arbitrageData.loading}
                 error={arbitrageData.error}
               />
+
+              <MoversCard
+                data={moversData.data?.movers || null}
+                loading={moversData.loading}
+                error={moversData.error}
+              />
             </div>
 
             {/* Right Column: Text Analyzer */}
-            <div>
+            <div className="space-y-6">
               <TextAnalyzer />
+
+              <FeedStatsCard
+                data={feedStatsData.data}
+                loading={feedStatsData.loading}
+                error={feedStatsData.error}
+              />
+
+              <AccountsCard
+                data={feedAccountsData.data}
+                loading={feedAccountsData.loading}
+                error={feedAccountsData.error}
+              />
             </div>
           </div>
+
+          <WalletPanel />
 
           {/* Data Source Info */}
           <div className="card p-6 mb-8">
@@ -202,7 +222,7 @@ function App() {
           {/* Footer */}
           <footer className="text-center text-sm text-gray-600 dark:text-gray-400 py-6 border-t border-gray-200 dark:border-gray-800">
             <p>Musashi API • Prediction Market Intelligence • {new Date().getFullYear()}</p>
-            <p className="text-xs mt-2">Backend: Running at http://localhost:3000 • Frontend: React + TypeScript</p>
+            <p className="text-xs mt-2">API Base: {API_BASE_URL} • Frontend: React + TypeScript</p>
           </footer>
         </main>
       </div>

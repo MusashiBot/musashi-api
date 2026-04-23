@@ -66,7 +66,7 @@ export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }
                   {market.platform}
                 </span>
               </div>
-              
+
               <div className="flex justify-between items-center">
                 <div className="flex gap-3 text-xs">
                   <div>

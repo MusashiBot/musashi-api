@@ -8,7 +8,7 @@ interface HealthCardProps {
 }
 
 export const HealthCard: React.FC<HealthCardProps> = ({ data, loading, error }) => {
-  if (error) {
+  if (error && !data) {
     return (
       <div className="card p-4 border-red-300 dark:border-red-800">
         <div className="text-red-600 dark:text-red-400">
@@ -19,7 +19,7 @@ export const HealthCard: React.FC<HealthCardProps> = ({ data, loading, error }) 
     );
   }
 
-  if (loading || !data) {
+  if (loading && !data) {
     return (
       <div className="card p-4">
         <div className="animate-pulse space-y-3">
@@ -30,7 +30,15 @@ export const HealthCard: React.FC<HealthCardProps> = ({ data, loading, error }) 
     );
   }
 
-  const statusColor = data.status === 'healthy' ? 'text-green-600 dark:text-green-500' : 
+  if (!data) {
+    return (
+      <div className="card p-4">
+        <p className="text-gray-500 dark:text-gray-400 text-sm">No health data loaded</p>
+      </div>
+    );
+  }
+
+  const statusColor = data.status === 'healthy' ? 'text-green-600 dark:text-green-500' :
                       data.status === 'degraded' ? 'text-yellow-600 dark:text-yellow-500' :
                       'text-red-600 dark:text-red-500';
 

@@ -8,7 +8,7 @@ interface ArbitrageCardProps {
 }
 
 export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, error }) => {
-  if (error) {
+  if (error && !data) {
     return (
       <div className="card p-4 border-red-300 dark:border-red-800">
         <h3 className="font-semibold mb-2">Arbitrage Opportunities</h3>
@@ -17,15 +17,11 @@ export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, err
     );
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="card p-4">
         <h3 className="font-semibold mb-4">Arbitrage Opportunities</h3>
-        <div className="space-y-3 animate-pulse">
-          {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded"></div>
-          ))}
-        </div>
+        <p className="text-gray-500 dark:text-gray-400 text-sm">Loading arbitrage opportunities...</p>
       </div>
     );
   }
@@ -40,8 +36,8 @@ export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, err
         <p className="text-gray-500 dark:text-gray-400 text-sm">No arbitrage opportunities found</p>
       ) : (
         <div className="space-y-3">
-          {arbitrageList.map((arb, idx) => (
-            <div key={idx} className="p-3 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-300 dark:border-gray-700">
+          {arbitrageList.map((arb) => (
+            <div key={`${arb.polymarket.id}-${arb.kalshi.id}-${arb.direction}`} className="p-3 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-300 dark:border-gray-700">
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">

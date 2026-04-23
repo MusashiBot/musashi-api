@@ -23,7 +23,6 @@ export function useFetch<T>(
       setError(null);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch data');
-      setData(null);
     } finally {
       setLoading(false);
     }

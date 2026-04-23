@@ -3,10 +3,14 @@ import React from 'react';
 interface HeaderProps {
   isDark: boolean;
   onToggleDark: () => void;
-  wsConnected?: boolean;
+  apiStatus?: 'healthy' | 'degraded' | 'down';
+  apiLoading?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isDark, onToggleDark, wsConnected = false }) => {
+export const Header: React.FC<HeaderProps> = ({ isDark, onToggleDark, apiStatus, apiLoading = false }) => {
+  const statusLabel = apiLoading ? 'Checking' : apiStatus === 'healthy' ? 'Online' : apiStatus === 'degraded' ? 'Degraded' : 'Offline';
+  const statusClass = apiLoading ? 'ws-connecting' : apiStatus === 'healthy' ? 'ws-connected' : apiStatus === 'degraded' ? 'ws-connecting' : 'ws-disconnected';
+
   return (
     <header className="sticky top-0 z-50 bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -16,21 +20,19 @@ export const Header: React.FC<HeaderProps> = ({ isDark, onToggleDark, wsConnecte
             Musashi
           </h1>
         </div>
-        
+
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              wsConnected ? 'ws-connected' : 'ws-disconnected'
-            }`}></div>
+            <div className={`w-2 h-2 rounded-full ${statusClass}`}></div>
             <span className="text-xs text-gray-600 dark:text-gray-400">
-              {wsConnected ? 'Live' : 'Offline'}
+              {statusLabel}
             </span>
           </div>
 
           <span className="text-sm text-gray-600 dark:text-gray-400">
             {new Date().toLocaleTimeString()}
           </span>
-          
+
           <button
             onClick={onToggleDark}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"

@@ -3,3 +3,7 @@ export { HealthCard } from './HealthCard';
 export { MarketsCard } from './MarketsCard';
 export { ArbitrageCard } from './ArbitrageCard';
 export { TextAnalyzer } from './TextAnalyzer';
+export { MoversCard } from './MoversCard';
+export { FeedStatsCard } from './FeedStatsCard';
+export { AccountsCard } from './AccountsCard';
+export { WalletPanel } from './WalletPanel';

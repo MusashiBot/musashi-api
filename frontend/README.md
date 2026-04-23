@@ -96,7 +96,7 @@ Theme preference is stored in `localStorage` and persisted across sessions. The 
 Create a `.env.local` file (optional):
 
 ```
-VITE_API_BASE_URL=http://127.0.0.1:3000
+VITE_API_BASE_URL=/api
 ```
 
 By default, the frontend proxies `/api/*` requests to the local API server via Vite's proxy configuration in `vite.config.ts`.
