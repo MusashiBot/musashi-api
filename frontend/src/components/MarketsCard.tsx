@@ -38,7 +38,7 @@ export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }
       <div className="flex flex-col gap-3 border-b border-[var(--border-primary)] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3>Market Feed</h3>
-          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">matched from live social and market scans</p>
+          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">live cross-platform market index</p>
         </div>
         <div className="flex flex-wrap gap-2 text-[10px] uppercase">
           <span className="badge badge-info">POLY {polymarketCount}</span>
@@ -54,7 +54,10 @@ export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }
           ))}
         </div>
       ) : topMarkets.length === 0 ? (
-        <p className="p-4 text-sm text-[var(--text-tertiary)]">No markets loaded</p>
+        <div className="space-y-1 p-4 text-sm text-[var(--text-tertiary)]">
+          <p className="text-[var(--text-primary)]">Market index is warming up.</p>
+          <p>Fresh cross-platform listings will appear here shortly.</p>
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="terminal-table">

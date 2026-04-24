@@ -10,6 +10,7 @@ This guide covers:
 ## What Musashi Provides
 
 Musashi provides structured prediction-market intelligence from live market + social data:
+- Live market listings (`/api/markets`)
 - Feed of analyzed tweets (`/api/feed`)
 - Cross-platform arbitrage opportunities (`/api/markets/arbitrage`)
 - Market movers (`/api/markets/movers`)
@@ -149,6 +150,10 @@ Returns analyzed tweets. Can be empty (`200`) when no recent matching tweets.
 ### `/api/feed/stats`
 
 Returns aggregate feed metrics. If this fails while others work, suspect KV/backing-store issues.
+
+### `/api/markets`
+
+Returns live market listings across Polymarket and Kalshi. `503` usually means upstream market sources are unavailable.
 
 ### `/api/markets/arbitrage`
 

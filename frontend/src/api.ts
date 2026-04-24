@@ -109,6 +109,38 @@ export interface ArbitrageResponse {
   };
 }
 
+export interface MarketsResponse {
+  markets: Market[];
+  count: number;
+  timestamp: string;
+  filters: {
+    limit: number;
+    platform: Market['platform'] | null;
+    category: string | null;
+    sort: 'volume' | 'updated' | 'price';
+  };
+  metadata: {
+    processing_time_ms: number;
+    markets_analyzed: number;
+    data_age_seconds: number;
+    fetched_at: string;
+    sources: {
+      polymarket: {
+        available: boolean;
+        last_successful_fetch: string | null;
+        error?: string;
+        market_count: number;
+      };
+      kalshi: {
+        available: boolean;
+        last_successful_fetch: string | null;
+        error?: string;
+        market_count: number;
+      };
+    };
+  };
+}
+
 export interface AnalyzeTextData {
   markets: MarketMatch[];
   matchCount: number;
@@ -271,6 +303,9 @@ export interface WalletActivityResponse {
 
 export const analyzeText = (text: string, minConfidence = 0.3) =>
   unwrapAnalyzeText(apiClient.post<AnalyzeTextResponse>('/analyze-text', { text, minConfidence }));
+
+export const getMarkets = (limit = 8, sort: MarketsResponse['filters']['sort'] = 'volume') =>
+  unwrapApiData<MarketsResponse>(apiClient.get(`/markets?limit=${limit}&sort=${sort}`));
 
 export const getArbitrage = (minSpread = 0.03) =>
   unwrapApiData<ArbitrageResponse>(apiClient.get(`/markets/arbitrage?minSpread=${minSpread}`));

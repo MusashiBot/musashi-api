@@ -90,6 +90,9 @@ describe('analyze-text', () => {
 });
 
 describe('markets', () => {
+  test('market list happy path', testOptions(), runAgentApiCase(testMarketsHappyPath));
+  test('market list rejects invalid limit', testOptions(), runAgentApiCase(testMarketsInvalidLimit));
+  test('market list platform filter echoes correctly', testOptions(), runAgentApiCase(testMarketsPlatformFilter));
   test('arbitrage happy path', testOptions(), runAgentApiCase(testArbitrageHappyPath));
   test('arbitrage rejects invalid minSpread', testOptions(), runAgentApiCase(testArbitrageInvalidMinSpread));
   test('arbitrage rejects invalid minConfidence', testOptions(), runAgentApiCase(testArbitrageInvalidMinConfidence));
@@ -258,6 +261,7 @@ async function testMethodMatrix(): Promise<CaseResult> {
   const endpoints = [
     { path: '/api/health', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/analyze-text', allowed: ['POST', 'OPTIONS'] as string[] },
+    { path: '/api/markets', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/markets/arbitrage', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/markets/movers', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/markets/smart-money', allowed: ['GET', 'OPTIONS'] as string[], optional: true },
@@ -616,6 +620,42 @@ async function testAnalyzeTextFormUrlEncoded(): Promise<CaseResult> {
   }
 
   return fail(`unexpected status ${response.status}`);
+}
+
+async function testMarketsHappyPath(): Promise<CaseResult> {
+  const response = await request('/api/markets?limit=5');
+
+  if (response.status === 503) {
+    return warn(extractError(response));
+  }
+
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  expect(response.json.success === true, 'markets success must be true');
+  validateMarketsResponse(response);
+  expect(response.json.data?.filters?.limit === 5, 'limit filter should echo 5');
+  return pass(`returned ${response.json.data.count} markets`);
+}
+
+async function testMarketsInvalidLimit(): Promise<CaseResult> {
+  const response = await request('/api/markets?limit=0');
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  return pass(extractError(response));
+}
+
+async function testMarketsPlatformFilter(): Promise<CaseResult> {
+  const response = await request('/api/markets?platform=polymarket&limit=3');
+
+  if (response.status === 503) {
+    return warn(extractError(response));
+  }
+
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  validateMarketsResponse(response);
+  expect(response.json.data.filters.platform === 'polymarket', 'market platform filter should echo polymarket');
+  for (const item of response.json.data.markets as any[]) {
+    expect(item.platform === 'polymarket', 'market platform filter returned non-polymarket market');
+  }
+  return pass(`returned ${response.json.data.count} polymarket markets`);
 }
 
 async function testArbitrageHappyPath(): Promise<CaseResult> {
@@ -1807,6 +1847,17 @@ function validateArbitrageResponse(response: HttpResult): void {
     expect(typeof item.profitPotential === 'number', 'arbitrage profitPotential must be number');
     expect(['buy_poly_sell_kalshi', 'buy_kalshi_sell_poly'].includes(item.direction), 'arbitrage direction invalid');
     expect(typeof item.confidence === 'number', 'arbitrage confidence must be number');
+  }
+}
+
+function validateMarketsResponse(response: HttpResult): void {
+  expect(response.headers.get('content-type')?.includes('application/json') === true, 'markets content-type must be json');
+  expect(response.json.data.count === response.json.data.markets.length, 'markets count should match markets length');
+  expectIsoTimestamp(response.json.data.timestamp, 'markets timestamp must be valid ISO');
+  expect(typeof response.json.data.metadata.processing_time_ms === 'number', 'markets processing_time_ms must be number');
+
+  for (const market of response.json.data.markets as any[]) {
+    validateMarket(market);
   }
 }
 

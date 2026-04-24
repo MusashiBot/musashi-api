@@ -68,6 +68,11 @@ export default async function handler(
           description: 'Analyze text and return matching markets with trading signals',
           status: 'healthy',
         },
+        '/api/markets': {
+          method: 'GET',
+          description: 'Get live cross-platform market listings',
+          status: 'healthy',
+        },
         '/api/markets/arbitrage': {
           method: 'GET',
           description: 'Get cross-platform arbitrage opportunities',

@@ -5,9 +5,17 @@ interface MoversCardProps {
   data: MarketMover[] | null;
   loading: boolean;
   error: string | null;
+  cachedSnapshot?: boolean;
+  lastSeen?: string | null;
 }
 
-export const MoversCard: React.FC<MoversCardProps> = ({ data, loading, error }) => {
+export const MoversCard: React.FC<MoversCardProps> = ({
+  data,
+  loading,
+  error,
+  cachedSnapshot = false,
+  lastSeen = null,
+}) => {
   const movers = useMemo(() => {
     const unique = new Map<string, MarketMover>();
 
@@ -41,10 +49,21 @@ export const MoversCard: React.FC<MoversCardProps> = ({ data, loading, error }) 
       <div className="flex flex-col gap-3 border-b border-[var(--border-primary)] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3>Market Movers</h3>
-          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">1h price velocity</p>
+          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">
+            {cachedSnapshot ? 'cached snapshot' : '1h price velocity'}
+          </p>
         </div>
-        {loading && <span className="badge badge-warning">REFRESHING</span>}
+        <div className="flex gap-2 text-[10px] uppercase">
+          {cachedSnapshot && <span className="badge badge-info">CACHED</span>}
+          {loading && <span className="badge badge-warning">REFRESHING</span>}
+        </div>
       </div>
+
+      {cachedSnapshot && lastSeen && (
+        <p className="border-b border-[var(--border-primary)] px-4 py-2 text-[10px] uppercase text-[var(--text-tertiary)]">
+          Last seen {new Date(lastSeen).toLocaleString()}
+        </p>
+      )}
 
       {loading && movers.length === 0 ? (
         <div className="space-y-2 p-4">

@@ -51,6 +51,7 @@ import healthHandler from '../api/health';
 import feedHandler from '../api/feed';
 import feedStatsHandler from '../api/feed/stats';
 import feedAccountsHandler from '../api/feed/accounts';
+import marketsHandler from '../api/markets';
 import arbitrageHandler from '../api/markets/arbitrage';
 import moversHandler from '../api/markets/movers';
 import smartMoneyHandler from '../api/markets/smart-money';
@@ -71,6 +72,7 @@ const ROUTES = new Map<string, Handler>([
   ['/api/feed', feedHandler],
   ['/api/feed/stats', feedStatsHandler],
   ['/api/feed/accounts', feedAccountsHandler],
+  ['/api/markets', marketsHandler],
   ['/api/markets/arbitrage', arbitrageHandler],
   ['/api/markets/movers', moversHandler],
   ['/api/markets/smart-money', smartMoneyHandler],

@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDarkMode, useFetch } from './hooks';
 import {
   getHealth,
+  getMarkets,
   getArbitrage,
   getFeed,
   getMovers,
   getFeedStats,
   getFeedAccounts,
   API_BASE_URL,
-  Market,
   ArbitrageOpportunity,
   MarketMover,
   HealthStatus,
+  MarketsResponse,
   ArbitrageResponse,
   FeedData,
   MoversResponse,
@@ -20,7 +21,6 @@ import {
 } from './api';
 import {
   Header,
-  HealthCard,
   MarketsCard,
   ArbitrageCard,
   TextAnalyzer,
@@ -30,13 +30,35 @@ import {
   WalletPanel,
 } from './components';
 
-const formatTime = (value?: string) => {
-  if (!value) {
-    return '--:--:--';
-  }
+const ARBITRAGE_CACHE_KEY = 'musashi-sticky-arbitrage';
+const MOVERS_CACHE_KEY = 'musashi-sticky-movers';
+const ARBITRAGE_CACHE_TIME_KEY = 'musashi-sticky-arbitrage-time';
+const MOVERS_CACHE_TIME_KEY = 'musashi-sticky-movers-time';
+const ARBITRAGE_COUNT_CACHE_KEY = 'musashi-arbitrage-count';
+const SIGNAL_COUNT_CACHE_KEY = 'musashi-signal-count-24h';
 
-  return new Date(value).toLocaleTimeString();
-};
+function readCachedJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readCachedNumber(key: string, fallback = 0): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function App() {
   const { isDark, toggle: toggleDark } = useDarkMode();
@@ -44,6 +66,11 @@ function App() {
   const healthData = useFetch<HealthStatus>(
     () => getHealth(),
     10000
+  );
+
+  const marketsData = useFetch<MarketsResponse>(
+    () => getMarkets(8),
+    30000
   );
 
   const arbitrageData = useFetch<ArbitrageResponse>(
@@ -70,42 +97,69 @@ function App() {
     () => getFeedAccounts(),
     300000
   );
-  const [stickyArbitrage, setStickyArbitrage] = useState<ArbitrageOpportunity[] | null>(null);
-  const [stickyMovers, setStickyMovers] = useState<MarketMover[] | null>(null);
+  const [stickyArbitrage, setStickyArbitrage] = useState<ArbitrageOpportunity[] | null>(() =>
+    readCachedJson<ArbitrageOpportunity[] | null>(ARBITRAGE_CACHE_KEY, null)
+  );
+  const [stickyMovers, setStickyMovers] = useState<MarketMover[] | null>(() =>
+    readCachedJson<MarketMover[] | null>(MOVERS_CACHE_KEY, null)
+  );
+  const [stickyArbitrageSeenAt, setStickyArbitrageSeenAt] = useState(() =>
+    readCachedNumber(ARBITRAGE_CACHE_TIME_KEY)
+  );
+  const [stickyMoversSeenAt, setStickyMoversSeenAt] = useState(() =>
+    readCachedNumber(MOVERS_CACHE_TIME_KEY)
+  );
+  const [cachedArbitrageCount, setCachedArbitrageCount] = useState(() =>
+    readCachedNumber(ARBITRAGE_COUNT_CACHE_KEY)
+  );
+  const [cachedSignalCount, setCachedSignalCount] = useState(() =>
+    readCachedNumber(SIGNAL_COUNT_CACHE_KEY)
+  );
 
   useEffect(() => {
     const nextArbitrage = arbitrageData.data?.opportunities || [];
     if (nextArbitrage.length > 0) {
+      const cachedAt = Date.now();
       setStickyArbitrage(nextArbitrage);
+      setStickyArbitrageSeenAt(cachedAt);
+      localStorage.setItem(ARBITRAGE_CACHE_KEY, JSON.stringify(nextArbitrage));
+      localStorage.setItem(ARBITRAGE_CACHE_TIME_KEY, String(cachedAt));
     }
   }, [arbitrageData.data?.opportunities]);
 
   useEffect(() => {
     const nextMovers = moversData.data?.movers || [];
     if (nextMovers.length > 0) {
+      const cachedAt = Date.now();
       setStickyMovers(nextMovers);
+      setStickyMoversSeenAt(cachedAt);
+      localStorage.setItem(MOVERS_CACHE_KEY, JSON.stringify(nextMovers));
+      localStorage.setItem(MOVERS_CACHE_TIME_KEY, String(cachedAt));
     }
   }, [moversData.data?.movers]);
 
-  const activeMarkets = useMemo(() => {
-    const marketsById = new Map<string, Market>();
+  useEffect(() => {
+    if (typeof arbitrageData.data?.count !== 'number') return;
+    setCachedArbitrageCount(arbitrageData.data.count);
+    localStorage.setItem(ARBITRAGE_COUNT_CACHE_KEY, String(arbitrageData.data.count));
+  }, [arbitrageData.data?.count]);
 
-    feedData.data?.tweets.forEach(tweet => {
-      tweet.matches.forEach(match => {
-        marketsById.set(match.market.id, match.market);
-      });
-    });
+  useEffect(() => {
+    const nextSignalCount = feedStatsData.data?.tweets.last_24h;
+    if (typeof nextSignalCount !== 'number') return;
+    setCachedSignalCount(nextSignalCount);
+    localStorage.setItem(SIGNAL_COUNT_CACHE_KEY, String(nextSignalCount));
+  }, [feedStatsData.data?.tweets.last_24h]);
 
-    return Array.from(marketsById.values());
-  }, [feedData.data]);
-
-  const totalMarkets = (healthData.data?.services?.polymarket?.markets || 0)
-    + (healthData.data?.services?.kalshi?.markets || 0);
+  const activeMarkets = marketsData.data?.markets || [];
   const latestSignals = feedData.data?.tweets.slice(0, 4) || [];
-  const arbitrageCount = arbitrageData.data?.count || 0;
-  const feedCount = feedData.data?.count || 0;
   const apiStatus = healthData.data?.status || 'down';
   const responseTime = healthData.data?.response_time_ms;
+  const statusClass = apiStatus === 'healthy' ? 'terminal-positive' : apiStatus === 'degraded' ? 'terminal-warning' : 'terminal-negative';
+  const currentMarkets = (healthData.data?.services?.polymarket?.markets ?? 0)
+    + (healthData.data?.services?.kalshi?.markets ?? 0);
+  const usingCachedArbitrage = !arbitrageData.data?.opportunities?.length && !!stickyArbitrage?.length;
+  const usingCachedMovers = !moversData.data?.movers?.length && !!stickyMovers?.length;
   const displayedArbitrage = arbitrageData.data?.opportunities?.length
     ? arbitrageData.data.opportunities
     : stickyArbitrage;
@@ -144,25 +198,25 @@ function App() {
         <section className="terminal-band terminal-band-grid" aria-label="Terminal metrics">
           <div className="terminal-stat">
             <span className="terminal-stat-label">API Status</span>
-            <strong className={apiStatus === 'healthy' ? 'terminal-stat-value terminal-positive' : 'terminal-stat-value terminal-warning'}>
-              {apiStatus.toUpperCase()}
+            <strong className={`terminal-stat-value ${statusClass}`}>
+              {responseTime ? `${responseTime}ms` : '--'}
             </strong>
-            <span className="terminal-stat-sub">{responseTime ? `${responseTime}ms` : 'waiting for health check'}</span>
+            <span className={`terminal-stat-sub ${statusClass}`}>{apiStatus.toUpperCase()}</span>
           </div>
           <div className="terminal-stat">
             <span className="terminal-stat-label">Markets Indexed</span>
-            <strong className="terminal-stat-value">{totalMarkets.toLocaleString()}</strong>
+            <strong className="terminal-stat-value">{currentMarkets.toLocaleString()}</strong>
             <span className="terminal-stat-sub">poly + kalshi sources</span>
           </div>
           <div className="terminal-stat">
             <span className="terminal-stat-label">Arbitrage Routes</span>
-            <strong className="terminal-stat-value terminal-positive">{arbitrageCount}</strong>
-            <span className="terminal-stat-sub">min spread 3%</span>
+            <strong className="terminal-stat-value terminal-positive">{cachedArbitrageCount}</strong>
+            <span className="terminal-stat-sub">live scan</span>
           </div>
           <div className="terminal-stat">
             <span className="terminal-stat-label">Signals Loaded</span>
-            <strong className="terminal-stat-value">{feedCount}</strong>
-            <span className="terminal-stat-sub">last sync {formatTime(feedData.data?.timestamp)}</span>
+            <strong className="terminal-stat-value">{cachedSignalCount}</strong>
+            <span className="terminal-stat-sub">matched in last 24h</span>
           </div>
         </section>
 
@@ -170,8 +224,8 @@ function App() {
           <div className="terminal-stack">
             <MarketsCard
               data={activeMarkets}
-              loading={feedData.loading}
-              error={feedData.error}
+              loading={marketsData.loading}
+              error={marketsData.error}
             />
 
             <div className="grid grid-cols-1 xl:grid-cols-2">
@@ -201,8 +255,13 @@ function App() {
                   <h2 className="terminal-panel-title">Live Signal Flow</h2>
                   <span className="terminal-panel-kicker">watch</span>
                 </div>
-                {latestSignals.length === 0 ? (
-                  <p className="text-[12px] text-[var(--text-tertiary)]">Waiting for feed signals...</p>
+                {feedData.error ? (
+                  <p className="text-[12px] text-[var(--text-tertiary)]">Signal monitor is temporarily unavailable.</p>
+                ) : latestSignals.length === 0 ? (
+                  <div className="space-y-2 text-[12px] leading-5 text-[var(--text-tertiary)]">
+                    <p className="text-[var(--text-primary)]">Live signal monitor active.</p>
+                    <p>New matched signals will appear here as the feed picks up market-moving posts.</p>
+                  </div>
                 ) : (
                   <div className="divide-y divide-[var(--border-primary)]">
                     {latestSignals.map(signal => (
@@ -226,22 +285,20 @@ function App() {
               data={displayedArbitrage}
               loading={arbitrageData.loading}
               error={arbitrageData.error}
+              cachedSnapshot={usingCachedArbitrage}
+              lastSeen={stickyArbitrageSeenAt ? new Date(stickyArbitrageSeenAt).toISOString() : null}
             />
 
             <MoversCard
               data={displayedMovers}
               loading={moversData.loading}
               error={moversData.error}
+              cachedSnapshot={usingCachedMovers}
+              lastSeen={stickyMoversSeenAt ? new Date(stickyMoversSeenAt).toISOString() : null}
             />
           </div>
 
           <aside className="terminal-stack" aria-label="Terminal side rail">
-            <HealthCard
-              data={healthData.data}
-              loading={healthData.loading}
-              error={healthData.error}
-            />
-
             <TextAnalyzer />
 
             <FeedStatsCard

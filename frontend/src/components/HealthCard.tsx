@@ -38,19 +38,8 @@ export const HealthCard: React.FC<HealthCardProps> = ({ data, loading, error }) 
     );
   }
 
-  const statusClass = data.status === 'healthy'
-    ? 'terminal-positive'
-    : data.status === 'degraded'
-      ? 'terminal-warning'
-      : 'terminal-negative';
-
   return (
     <section className="card p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h3>System Status</h3>
-        <span className={`text-sm font-bold uppercase ${statusClass}`}>{data.status}</span>
-      </div>
-
       <div className="space-y-3 text-sm">
         <div className="flex justify-between gap-4">
           <span className="terminal-muted">Polymarket</span>

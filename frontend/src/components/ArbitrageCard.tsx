@@ -5,6 +5,8 @@ interface ArbitrageCardProps {
   data: ArbitrageOpportunity[] | null;
   loading: boolean;
   error: string | null;
+  cachedSnapshot?: boolean;
+  lastSeen?: string | null;
 }
 
 const directionLabel: Record<ArbitrageOpportunity['direction'], string> = {
@@ -22,7 +24,13 @@ const buildArbitrageKey = (arb: ArbitrageOpportunity) => [
 
 const getMarketUrl = (url?: string) => url && url.trim().length > 0 ? url : null;
 
-export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, error }) => {
+export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({
+  data,
+  loading,
+  error,
+  cachedSnapshot = false,
+  lastSeen = null,
+}) => {
   const arbitrageList = useMemo(() => {
     const unique = new Map<string, ArbitrageOpportunity>();
 
@@ -57,15 +65,24 @@ export const ArbitrageCard: React.FC<ArbitrageCardProps> = ({ data, loading, err
       <div className="flex flex-col gap-3 border-b border-[var(--border-primary)] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3>Arbitrage</h3>
-          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">same-event price dislocations</p>
+          <p className="mt-1 text-[10px] uppercase text-[var(--text-tertiary)]">
+            {cachedSnapshot ? 'cached snapshot' : 'same-event price dislocations'}
+          </p>
         </div>
         <div className="flex gap-2 text-[10px] uppercase">
           <span className={arbitrageList.length > 0 ? 'badge badge-success' : 'badge badge-info'}>
             {arbitrageList.length} routes
           </span>
+          {cachedSnapshot && <span className="badge badge-info">CACHED</span>}
           {loading && <span className="badge badge-warning">SCANNING</span>}
         </div>
       </div>
+
+      {cachedSnapshot && lastSeen && (
+        <p className="border-b border-[var(--border-primary)] px-4 py-2 text-[10px] uppercase text-[var(--text-tertiary)]">
+          Last seen {new Date(lastSeen).toLocaleString()}
+        </p>
+      )}
 
       {loading && arbitrageList.length === 0 ? (
         <p className="p-4 text-sm text-[var(--text-tertiary)]">Loading arbitrage routes...</p>

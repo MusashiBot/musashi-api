@@ -74,6 +74,7 @@ This runs both the API server (on port 3000) and the frontend (on port 5173) con
 
 The frontend communicates with the Musashi API through:
 
+- `/api/markets` — Live cross-platform market listings
 - `/api/health` — System status
 - `/api/markets/arbitrage` — Arbitrage opportunities
 - `/api/analyze-text` — Text analysis and signal generation
