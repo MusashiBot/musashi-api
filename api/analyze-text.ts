@@ -161,6 +161,9 @@ export default async function handler(
 
     // Stage 0: Get freshness metadata
     const freshnessMetadata = getMarketMetadata();
+    const sourcesChecked = Object.values(freshnessMetadata.sources)
+      .filter(source => source.available)
+      .length;
 
     // Build response
     const response = {
@@ -177,7 +180,7 @@ export default async function handler(
         arbitrage: signal.arbitrage,
         metadata: {
           processing_time_ms: Date.now() - startTime,
-          sources_checked: 2, // Polymarket + Kalshi
+          sources_checked: sourcesChecked,
           markets_analyzed: markets.length,
           model_version: 'v2.0.0',
           // Stage 0: Freshness metadata

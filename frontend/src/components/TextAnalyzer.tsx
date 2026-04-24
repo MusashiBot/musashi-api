@@ -73,6 +73,8 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({ onAnalyze }) => {
               }>
                 {result.urgency}
               </span>
+              <span className="terminal-muted">Sources</span>
+              <span className="text-[var(--text-primary)]">{result.data.metadata.sources_checked}</span>
               <span className="terminal-muted">Matches</span>
               <span className="text-[var(--text-primary)]">{result.data.markets.length}</span>
             </div>
