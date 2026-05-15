@@ -121,8 +121,16 @@ export function computePriceChange(
   // overstates change magnitude — see prior FIX 7 in the original code.
   if (closestDiff > hoursAgo * 60 * 60 * 1000 * 0.5) return null;
 
+  const rawChange = current.yesPrice - closest.yesPrice;
+  const actualHoursElapsed = (current.timestamp - closest.timestamp) / (60 * 60 * 1000);
+
+  // Normalize the change to represent a true hoursAgo equivalent.
+  // If the closest snapshot is 90 minutes ago instead of 60, scale down the change
+  // proportionally to avoid overstating movement when snapshots aren't exactly hoursAgo apart.
+  const normalizedChange = rawChange * (hoursAgo / actualHoursElapsed);
+
   return {
-    change: current.yesPrice - closest.yesPrice,
+    change: normalizedChange,
     previousPrice: closest.yesPrice,
   };
 }
