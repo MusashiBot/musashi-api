@@ -1,104 +1,151 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchPolymarkets } from '../src/api/polymarket-client';
-import { fetchKalshiMarkets } from '../src/api/kalshi-client';
+import { getMarkets } from './lib/market-cache';
+import { kv } from './lib/vercel-kv';
+import {
+  getMoversKey,
+  META_LAST_SNAPSHOT_RUN,
+} from './lib/price-snapshots';
+
+type CheckStatus = 'healthy' | 'degraded' | 'down';
+interface CheckResult {
+  status: CheckStatus;
+  detail?: Record<string, unknown>;
+  error?: string;
+}
+
+const POLY_MIN_HEALTHY = parseInt(process.env.HEALTH_POLY_MIN || '800', 10);
+const KALSHI_MIN_HEALTHY = parseInt(process.env.HEALTH_KALSHI_MIN || '200', 10);
+const FRESHNESS_MAX_AGE_MS = 5 * 60 * 1000;
+const KV_PROBE_KEY = 'health:probe';
+const KV_PROBE_TIMEOUT_MS = 1500;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let handle: ReturnType<typeof setTimeout>;
+  const timer = new Promise<T>((_, reject) => {
+    handle = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timer]).finally(() => clearTimeout(handle));
+}
+
+async function checkMarketCounts(): Promise<CheckResult> {
+  try {
+    const markets = await getMarkets();
+    const poly = markets.filter((m) => m.platform === 'polymarket').length;
+    const kalshi = markets.filter((m) => m.platform === 'kalshi').length;
+
+    const polyOk = poly >= POLY_MIN_HEALTHY;
+    const kalshiOk = kalshi >= KALSHI_MIN_HEALTHY;
+
+    return {
+      status: polyOk && kalshiOk ? 'healthy' : 'degraded',
+      detail: {
+        polymarket: { markets: poly, threshold: POLY_MIN_HEALTHY, ok: polyOk },
+        kalshi: { markets: kalshi, threshold: KALSHI_MIN_HEALTHY, ok: kalshiOk },
+        total: markets.length,
+      },
+    };
+  } catch (err) {
+    return { status: 'down', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function checkKvReachable(): Promise<CheckResult> {
+  const t0 = Date.now();
+  try {
+    await withTimeout(kv.set(KV_PROBE_KEY, t0, { ex: 60 }), KV_PROBE_TIMEOUT_MS, 'KV write');
+    await withTimeout(kv.get<number>(KV_PROBE_KEY), KV_PROBE_TIMEOUT_MS, 'KV read');
+    const latency = Date.now() - t0;
+    return {
+      status: latency > 1000 ? 'degraded' : 'healthy',
+      detail: { latency_ms: latency },
+    };
+  } catch (err) {
+    return { status: 'down', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function checkFreshness(
+  key: string,
+  label: string,
+  extract: (v: any) => string | undefined,
+): Promise<CheckResult> {
+  try {
+    const value = await kv.get<any>(key);
+    if (!value) {
+      return { status: 'degraded', error: `${label}: no run recorded yet` };
+    }
+    const ts = extract(value);
+    if (!ts) {
+      return { status: 'degraded', error: `${label}: missing timestamp` };
+    }
+    const ageMs = Date.now() - new Date(ts).getTime();
+    return {
+      status: ageMs > FRESHNESS_MAX_AGE_MS ? 'degraded' : 'healthy',
+      detail: { last_run: ts, age_seconds: Math.floor(ageMs / 1000) },
+    };
+  } catch (err) {
+    return { status: 'down', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function rollup(checks: Record<string, CheckResult>): CheckStatus {
+  const statuses = Object.values(checks).map((c) => c.status);
+  if (statuses.every((s) => s === 'healthy')) return 'healthy';
+  if (statuses.some((s) => s === 'down')) return 'down';
+  return 'degraded';
+}
 
 export default async function handler(
   req: VercelRequest,
-  res: VercelResponse
+  res: VercelResponse,
 ): Promise<void> {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Only accept GET
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET, OPTIONS');
-    res.status(405).json({
-      success: false,
-      error: 'Method not allowed. Use GET.',
-    });
+    res.status(405).json({ success: false, error: 'Method not allowed. Use GET.' });
     return;
   }
 
   const startTime = Date.now();
 
   try {
-    // Test API connections
-    const [polyResult, kalshiResult] = await Promise.allSettled([
-      fetchPolymarkets(10, 1), // Just fetch 10 markets as a health check
-      fetchKalshiMarkets(10, 1),
+    const [marketCounts, kvReach, snapshotFresh, moversFresh] = await Promise.all([
+      checkMarketCounts(),
+      checkKvReachable(),
+      checkFreshness(META_LAST_SNAPSHOT_RUN, 'snapshots', (v) => v?.timestamp),
+      checkFreshness(getMoversKey('0.05'), 'movers', (v) => v?.computedAt),
     ]);
 
-    const polymarketStatus = polyResult.status === 'fulfilled'
-      ? { status: 'healthy', markets: polyResult.value.length }
-      : { status: 'degraded', error: String(polyResult.reason) };
+    const checks = {
+      market_counts: marketCounts,
+      kv_reachable: kvReach,
+      snapshot_freshness: snapshotFresh,
+      movers_freshness: moversFresh,
+    };
 
-    const kalshiStatus = kalshiResult.status === 'fulfilled'
-      ? { status: 'healthy', markets: kalshiResult.value.length }
-      : { status: 'degraded', error: String(kalshiResult.reason) };
+    const overall = rollup(checks);
 
-    // Determine overall status
-    const overallStatus =
-      polymarketStatus.status === 'healthy' && kalshiStatus.status === 'healthy'
-        ? 'healthy'
-        : polymarketStatus.status === 'degraded' && kalshiStatus.status === 'degraded'
-        ? 'down'
-        : 'degraded';
-
-    const healthData = {
-      status: overallStatus,
-      timestamp: new Date().toISOString(),
-      uptime_ms: process.uptime() * 1000,
-      response_time_ms: Date.now() - startTime,
-      version: '2.0.0',
-      services: {
-        polymarket: polymarketStatus,
-        kalshi: kalshiStatus,
-      },
-      endpoints: {
-        '/api/analyze-text': {
-          method: 'POST',
-          description: 'Analyze text and return matching markets with trading signals',
-          status: 'healthy',
-        },
-        '/api/markets/arbitrage': {
-          method: 'GET',
-          description: 'Get cross-platform arbitrage opportunities',
-          status: 'healthy',
-        },
-        '/api/markets/movers': {
-          method: 'GET',
-          description: 'Get markets with significant price changes',
-          status: 'healthy',
-        },
-        '/api/health': {
-          method: 'GET',
-          description: 'API health check',
-          status: 'healthy',
-        },
-      },
-      limits: {
-        max_markets_per_request: 5,
-        cache_ttl_seconds: 300,
-        rate_limit: 'none (currently)',
+    const body = {
+      success: overall === 'healthy',
+      data: {
+        status: overall,
+        timestamp: new Date().toISOString(),
+        response_time_ms: Date.now() - startTime,
+        version: '2.1.0',
+        checks,
       },
     };
 
-    const response = {
-      success: true,
-      data: healthData,
-    };
-
-    const statusCode = overallStatus === 'healthy' ? 200 : overallStatus === 'degraded' ? 503 : 503;
-    res.status(statusCode).json(response);
-
+    const statusCode = overall === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(body);
   } catch (error) {
     console.error('[Health API] Error:', error);
     res.status(500).json({

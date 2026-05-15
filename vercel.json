@@ -32,11 +32,19 @@
     {
       "source": "/api/feed/accounts",
       "destination": "/api/feed/accounts.ts"
+    },
+    {
+      "source": "/api/cron/refresh-markets",
+      "destination": "/api/cron/refresh-markets.ts"
     }
   ],
   "crons": [
     {
       "path": "/api/cron/collect-tweets",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-markets",
       "schedule": "*/2 * * * *"
     }
   ],
