@@ -1,11 +1,32 @@
-import { areMarketsSimilar } from '../arbitrage-detector';
+import { areMarketsSimilar, buildBM25Stats } from '../arbitrage-detector';
 import { normalizeMinConfidence } from '../../../api/markets/arbitrage';
 import { computePriceChange } from '../../../api/lib/price-snapshots';
 import { Market } from '../../types/market';
 
+function makeMarket(overrides: Partial<Market> & { id: string; keywords: string[] }): Market {
+  return {
+    platform: 'polymarket',
+    title: '',
+    description: '',
+    category: 'finance',
+    yesPrice: 0.5,
+    noPrice: 0.5,
+    volume24h: 0,
+    url: '',
+    lastUpdated: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 function assertEqual(actual: unknown, expected: unknown, message: string) {
   if (actual !== expected) {
     throw new Error(`${message}: expected ${expected}, got ${actual}`);
+  }
+}
+
+function assert(condition: boolean, message: string) {
+  if (!condition) {
+    throw new Error(message);
   }
 }
 
@@ -15,177 +36,200 @@ function assertEqual(actual: unknown, expected: unknown, message: string) {
 function runTests() {
   console.log('Running areMarketsSimilar tests...\n');
 
-  // Test case 1: False positive that should now be rejected
-  // Previously matched due to low keyword threshold + stop words
-  const market1: Market = {
+  // Test 1: stop-word-heavy false positive (should be rejected)
+  const market1 = makeMarket({
     id: '1',
     platform: 'polymarket',
     title: 'Will the market go up?',
-    category: 'finance',
-    yesPrice: 0.5,
-    url: '',
-    keywords: ['market', 'will', 'go', 'up', 'price'], // Common stop words
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
-
-  const market2: Market = {
+    keywords: ['market', 'will', 'go', 'up', 'price'],
+  });
+  const market2 = makeMarket({
     id: '2',
     platform: 'kalshi',
     title: 'Will the stock market rise?',
-    category: 'finance',
-    yesPrice: 0.6,
-    url: '',
-    keywords: ['market', 'will', 'stock', 'rise', 'price'], // Common stop words
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
+    keywords: ['market', 'will', 'stock', 'rise', 'price'],
+  });
 
-  const result1 = areMarketsSimilar(market1, market2);
-  console.log('Test 1 - False positive (should be rejected):');
-  console.log(`  Market1: "${market1.title}"`);
-  console.log(`  Market2: "${market2.title}"`);
-  console.log(`  Keywords1: [${market1.keywords.join(', ')}]`);
-  console.log(`  Keywords2: [${market2.keywords.join(', ')}]`);
-  console.log(`  Result: ${result1.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result1.reason}`);
-  console.log(`  Expected: NO MATCH (filtered stop words, low overlap)\n`);
-
-  // Test case 2: True match that should still pass
-  // High title similarity
-  const market3: Market = {
+  // Test 2: paraphrased title (should still match via title-similarity path)
+  const market3 = makeMarket({
     id: '3',
     platform: 'polymarket',
     title: 'Will Apple stock hit $200 by end of 2026?',
-    category: 'finance',
-    yesPrice: 0.5,
-    url: '',
     keywords: ['apple', 'stock', 'hit', '200', 'end', '2026'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
-
-  const market4: Market = {
+  });
+  const market4 = makeMarket({
     id: '4',
     platform: 'kalshi',
     title: 'Will Apple stock reach $200 by end of 2026?',
-    category: 'finance',
-    yesPrice: 0.55,
-    url: '',
     keywords: ['apple', 'stock', 'reach', '200', 'end', '2026'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
+  });
 
-  const result2 = areMarketsSimilar(market3, market4);
-  console.log('Test 2 - True match (should pass):');
-  console.log(`  Market3: "${market3.title}"`);
-  console.log(`  Market4: "${market4.title}"`);
-  console.log(`  Keywords3: [${market3.keywords.join(', ')}]`);
-  console.log(`  Keywords4: [${market4.keywords.join(', ')}]`);
-  console.log(`  Result: ${result2.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result2.reason}`);
-  console.log(`  Expected: MATCH (high title similarity)\n`);
-
-  // Test case 3: Different categories (should be rejected)
-  const market5: Market = {
+  // Test 3: different categories (category gate should reject)
+  const market5 = makeMarket({
     id: '5',
     platform: 'polymarket',
     title: 'Will Tesla stock go up?',
-    category: 'finance',
-    yesPrice: 0.5,
-    url: '',
     keywords: ['tesla', 'stock', 'go', 'up'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
-
-  const market6: Market = {
+  });
+  const market6 = makeMarket({
     id: '6',
     platform: 'kalshi',
     title: 'Will Tesla win the race?',
     category: 'sports',
-    yesPrice: 0.5,
-    url: '',
     keywords: ['tesla', 'win', 'race'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
+  });
 
-  const result3 = areMarketsSimilar(market5, market6);
-  console.log('Test 3 - Different categories (should be rejected):');
-  console.log(`  Market5: "${market5.title}" (category: ${market5.category})`);
-  console.log(`  Market6: "${market6.title}" (category: ${market6.category})`);
-  console.log(`  Result: ${result3.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result3.reason}`);
-  console.log(`  Expected: NO MATCH (different categories)\n`);
-
-  // Test case 4: minConfidence clamp behavior should keep the floor at 0.5
-  const minConfidenceClampResult = 0.1;
-  const effectiveClamp = normalizeMinConfidence(minConfidenceClampResult);
-  assertEqual(effectiveClamp, 0.5, 'minConfidence clamp should enforce a 0.5 floor');
-  console.log('Test 4 - minConfidence clamp behavior confirmed.');
-  console.log(`  Requested minConfidence: ${minConfidenceClampResult}`);
-  console.log(`  Effective minConfidence: ${effectiveClamp}`);
-  console.log(`  Expected: 0.5 floor enforced\n`);
-
-  // Test case 5: Strong keyword overlap (should pass with new threshold)
-  const market7: Market = {
+  // Test 4: strong keyword overlap (should match via BM25 path)
+  const market7 = makeMarket({
     id: '7',
     platform: 'polymarket',
     title: 'Federal Reserve interest rate decision',
     category: 'economics',
-    yesPrice: 0.5,
-    url: '',
     keywords: ['federal', 'reserve', 'interest', 'rate', 'decision', 'economy', 'policy'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
-
-  const market8: Market = {
+  });
+  const market8 = makeMarket({
     id: '8',
     platform: 'kalshi',
     title: 'Fed rate hike announcement',
     category: 'economics',
-    yesPrice: 0.5,
-    url: '',
     keywords: ['fed', 'rate', 'announcement', 'federal', 'reserve', 'interest', 'policy'],
-    volume24h: 0,
-    createdAt: new Date().toISOString(),
-  };
+  });
 
-  const result4 = areMarketsSimilar(market7, market8);
-  console.log('Test 4 - Strong keyword overlap (should pass):');
-  console.log(`  Market7: "${market7.title}"`);
-  console.log(`  Market8: "${market8.title}"`);
-  console.log(`  Keywords7: [${market7.keywords.join(', ')}]`);
-  console.log(`  Keywords8: [${market8.keywords.join(', ')}]`);
-  console.log(`  Result: ${result4.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result4.reason}`);
-  console.log(`  Expected: MATCH (5+ shared keywords after filtering)\n`);
+  // Test 5: rare-term coincidence (should be rejected).
+  // Same category, one accidentally shared rare token ("mars"), nothing else
+  // in common. Plain overlap-counting would flag this; BM25's self-score
+  // normalization keeps the ratio low because each side's unique terms
+  // dominate the bound.
+  const rareA = makeMarket({
+    id: 'rare-a',
+    platform: 'polymarket',
+    title: 'Will SpaceX launch Starship to Mars in Q3?',
+    category: 'tech',
+    keywords: ['spacex', 'starship', 'launch', 'q3', 'rocket', 'mars'],
+  });
+  const rareB = makeMarket({
+    id: 'rare-b',
+    platform: 'kalshi',
+    title: 'Will Apple unveil a new headset?',
+    category: 'tech',
+    keywords: ['apple', 'headset', 'unveil', 'vision', 'pro', 'mars'],
+  });
 
-  // Test case 6: Price change normalization
+  // Test 6: high-volume shared-term pair (should still match).
+  // The shared tokens ("trump", "2028", "election", "president") are common
+  // across the padded corpus below — i.e. low IDF — but the pair still
+  // overlaps on ~5/6 keywords, so BM25 normalized similarity stays high.
+  const popA = makeMarket({
+    id: 'pop-a',
+    platform: 'polymarket',
+    title: 'Will Trump win the 2028 election?',
+    category: 'politics',
+    keywords: ['trump', 'election', '2028', 'president', 'win', 'republican'],
+  });
+  const popB = makeMarket({
+    id: 'pop-b',
+    platform: 'kalshi',
+    title: 'Trump elected president in 2028',
+    category: 'politics',
+    keywords: ['trump', 'election', '2028', 'president', 'elected', 'republican'],
+  });
+
+  // Padding so popular terms in Test 6 actually have low IDF.
+  // Without this, df=2 for "trump" would still give it meaningful weight.
+  const popPadding = [
+    ['trump', 'election', '2028', 'rally', 'iowa'],
+    ['trump', 'indictment', '2028', 'court', 'verdict'],
+    ['trump', 'president', '2028', 'debate', 'cnn'],
+    ['trump', 'election', '2028', 'biden', 'rematch'],
+    ['trump', 'election', '2028', 'haley', 'primary'],
+  ].map((kws, i) =>
+    makeMarket({ id: `pad-${i}`, category: 'politics', keywords: kws })
+  );
+
+  // Generic finance-noise padding so common terms ("market", "will", "price",
+  // "stock") get high df → low IDF, mirroring the production distribution.
+  // Without this the test corpus is too small for IDF to suppress stopwords.
+  const financeNoise = [
+    ['market', 'will', 'price', 'bond', 'yield'],
+    ['market', 'will', 'price', 'spy', 'index'],
+    ['market', 'price', 'will', 'bitcoin', 'crypto'],
+    ['stock', 'will', 'market', 'nasdaq', 'tech'],
+    ['stock', 'market', 'price', 'banking', 'earnings'],
+    ['will', 'market', 'stock', 'oil', 'brent'],
+    ['market', 'price', 'gold', 'commodity', 'will'],
+    ['stock', 'market', 'price', 'russell', 'cap'],
+    ['will', 'stock', 'price', 'gain', 'session'],
+    ['market', 'will', 'sector', 'price', 'momentum'],
+  ].map((kws, i) =>
+    makeMarket({ id: `noise-${i}`, category: 'finance', keywords: kws })
+  );
+
+  const corpus = [
+    market1, market2, market3, market4, market5, market6, market7, market8,
+    rareA, rareB, popA, popB, ...popPadding, ...financeNoise,
+  ];
+  const stats = buildBM25Stats(corpus);
+
+  const result1 = areMarketsSimilar(market1, market2, stats);
+  console.log('Test 1 - Stop-word-heavy false positive (should be rejected):');
+  console.log(`  "${market1.title}" vs "${market2.title}"`);
+  console.log(`  Result: ${result1.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result1.reason}\n`);
+  assert(!result1.isSimilar, 'Test 1: expected NO MATCH for stop-word-heavy pair');
+
+  const result2 = areMarketsSimilar(market3, market4, stats);
+  console.log('Test 2 - Paraphrased title (should match):');
+  console.log(`  "${market3.title}" vs "${market4.title}"`);
+  console.log(`  Result: ${result2.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result2.reason}\n`);
+  assert(result2.isSimilar, 'Test 2: expected MATCH for paraphrased titles');
+
+  const result3 = areMarketsSimilar(market5, market6, stats);
+  console.log('Test 3 - Different categories (should be rejected):');
+  console.log(`  "${market5.title}" (${market5.category}) vs "${market6.title}" (${market6.category})`);
+  console.log(`  Result: ${result3.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result3.reason}\n`);
+  assert(!result3.isSimilar, 'Test 3: expected NO MATCH across categories');
+
+  const result4 = areMarketsSimilar(market7, market8, stats);
+  console.log('Test 4 - Strong keyword overlap via BM25 (should match):');
+  console.log(`  "${market7.title}" vs "${market8.title}"`);
+  console.log(`  Result: ${result4.isSimilar ? 'MATCH' : 'NO MATCH'} - ${result4.reason}\n`);
+  assert(result4.isSimilar, 'Test 4: expected MATCH for Fed/Federal Reserve overlap');
+
+  const resultRare = areMarketsSimilar(rareA, rareB, stats);
+  console.log('Test 5 - Rare-term coincidence (should be rejected):');
+  console.log(`  "${rareA.title}" vs "${rareB.title}"`);
+  console.log(`  Shared keyword: mars (single rare-term coincidence)`);
+  console.log(`  Result: ${resultRare.isSimilar ? 'MATCH' : 'NO MATCH'} - ${resultRare.reason}\n`);
+  assert(!resultRare.isSimilar, 'Test 5: expected NO MATCH for rare-term coincidence');
+
+  const resultPop = areMarketsSimilar(popA, popB, stats);
+  console.log('Test 6 - High-volume shared-term pair (should match):');
+  console.log(`  "${popA.title}" vs "${popB.title}"`);
+  console.log(`  Padded corpus inflates df for trump/2028/election/president`);
+  console.log(`  Result: ${resultPop.isSimilar ? 'MATCH' : 'NO MATCH'} - ${resultPop.reason}\n`);
+  assert(resultPop.isSimilar, 'Test 6: expected MATCH for high-volume shared-term pair');
+
+  // Test 7: minConfidence clamp floor
+  const minConfidenceClampResult = 0.1;
+  const effectiveClamp = normalizeMinConfidence(minConfidenceClampResult);
+  assertEqual(effectiveClamp, 0.5, 'minConfidence clamp should enforce a 0.5 floor');
+  console.log('Test 7 - minConfidence clamp behavior confirmed.');
+  console.log(`  Requested: ${minConfidenceClampResult} → Effective: ${effectiveClamp}\n`);
+
+  // Test 8: Price change normalization
   const now = Date.now();
   const snapshots = [
-    { marketId: 'test', yesPrice: 0.4, timestamp: now - 90 * 60 * 1000 }, // 90 min ago
-    { marketId: 'test', yesPrice: 0.5, timestamp: now }, // current
+    { marketId: 'test', yesPrice: 0.4, timestamp: now - 90 * 60 * 1000 },
+    { marketId: 'test', yesPrice: 0.5, timestamp: now },
   ];
   const priceChangeResult = computePriceChange(snapshots, 1);
-  const expectedNormalizedChange = (0.5 - 0.4) * (1 / 1.5); // raw change 0.1 over 1.5h, normalized to 1h
+  const expectedNormalizedChange = (0.5 - 0.4) * (1 / 1.5);
   assertEqual(priceChangeResult?.change, expectedNormalizedChange, 'Price change should be normalized by actual elapsed time');
-  console.log('Test 6 - Price change normalization confirmed.');
-  console.log(`  Snapshots: 0.4 at 90min ago, 0.5 now`);
-  console.log(`  Raw change: 0.1 over 1.5h`);
-  console.log(`  Normalized change: ${priceChangeResult?.change} (expected: ${expectedNormalizedChange})`);
-  console.log(`  Expected: Normalized to 1h equivalent\n`);
+  console.log('Test 8 - Price change normalization confirmed.');
+  console.log(`  Raw 0.1 over 1.5h → normalized ${priceChangeResult?.change}\n`);
 
-  // Test case 7: minChange validation (would return 400 for < 0.02)
-  const invalidMinChange = 0.01;
-  console.log('Test 7 - minChange validation (API would return 400):');
-  console.log(`  Requested minChange: ${invalidMinChange}`);
-  console.log(`  Expected: 400 error "minChange must be at least 0.02"`);
-  console.log(`  (This is validated in the API handler, not in unit tests)\n`);
-
-  console.log('Tests completed.');
+  console.log('All tests passed.');
 }
 
-// Run tests if this file is executed directly
 if (require.main === module) {
   runTests();
 }
