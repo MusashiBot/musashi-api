@@ -134,6 +134,8 @@ export default async function handler(
 
       totalCollected += result.tweets.length;
 
+      const tweetsToStore: AnalyzedTweet[] = [];
+
       for (const rawTweet of result.tweets) {
         totalAnalyzed++;
 
@@ -168,11 +170,16 @@ export default async function handler(
           collected_at: new Date().toISOString(),
         };
 
-        // Store tweet in KV
-        await storeTweet(analyzedTweet);
-        totalStored++;
+        tweetsToStore.push(analyzedTweet);
       }
+      await Promise.allSettled(
+        tweetsToStore.map(tweet => storeTweet(tweet))
+      );
+
+      totalStored += tweetsToStore.length;
     }
+
+  
 
     // Step 6: Update feed indices
     await updateFeedIndices();

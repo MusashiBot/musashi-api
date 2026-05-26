@@ -172,7 +172,7 @@ function generateSuggestedAction(
   urgency: UrgencyLevel
 ): SuggestedAction {
   // Don't suggest action if edge is too low
-  if (edge < 0.10) {
+  if (edge < 0.05) {
     return {
       direction: 'HOLD',
       confidence: 0,
