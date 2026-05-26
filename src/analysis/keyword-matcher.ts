@@ -853,8 +853,8 @@ function isPromotionalContent(text: string): boolean {
   }
 
   // Excessive emoji usage (often in spam)
-  const emojiCount = (text.match(/[\uD800-\uDFFF]/g) || []).length;
-  if (emojiCount > 15 && text.length < 200) {
+  const emojiCount = [...text].filter(c => (c.codePointAt(0) ?? 0) > 0xFFFF).length;
+  if (emojiCount > 8 && text.length < 200) {
     return true; // More than 15 emoji chars in a short tweet is suspicious
   }
 

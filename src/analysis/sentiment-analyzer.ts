@@ -15,7 +15,7 @@ const BULLISH_KEYWORDS = [
   'bullish', 'moon', 'rally', 'pump', 'surge', 'soar', 'skyrocket',
   'buy', 'long', 'calls', 'green', 'win', 'winning', 'yes', 'definitely',
   'confirmed', 'happening', 'inevitable', 'obvious', 'clearly', 'certain',
-  'guarantee', 'lock', 'easy', 'confident', 'predict', 'will happen',
+  'guarantee', 'lock', 'easy', 'confident', 'predict', 'happen',
   'going to', 'up', 'rise', 'increase', 'gain', 'profit', 'success',
   'boom', 'growth', 'explosive', 'parabolic', 'breakout'
 ];
@@ -53,13 +53,11 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
 
   for (let i = 0; i < words.length; i++) {
     const word = words[i].replace(/[^a-z]/g, '');
-    const prevWord = i > 0 ? words[i - 1].replace(/[^a-z]/g, '') : '';
-
-    // Check for negation
-    const isNegated = NEGATIONS.includes(prevWord);
-
-    // Check for strong modifier
-    const isStrong = STRONG_MODIFIERS.includes(prevWord);
+    // Look back 2 words so negation passes through a modifier
+    const prev1 = i > 0 ? words[i-1].replace(/[^a-z]/g,'') : '';
+    const prev2 = i > 1 ? words[i-2].replace(/[^a-z]/g,'') : '';
+    const isNegated = NEGATIONS.includes(prev1) || (STRONG_MODIFIERS.includes(prev1) && NEGATIONS.includes(prev2));
+    const isStrong = STRONG_MODIFIERS.includes(prev1) && !NEGATIONS.includes(prev2);
     const weight = isStrong ? 2 : 1;
 
     // Check bullish
