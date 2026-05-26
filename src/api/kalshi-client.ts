@@ -195,7 +195,7 @@ function toMarket(km: KalshiMarket): Market {
     yesAsk,
     noBid,
     noAsk,
-    volume24h: km.volume_24h ?? km.volume ?? 0,
+    volume24h: km.volume_24h ?? 0,
     url: marketUrl,
     category: inferCategory(km.series_ticker || km.event_ticker || km.ticker),
     lastUpdated: new Date().toISOString(),
