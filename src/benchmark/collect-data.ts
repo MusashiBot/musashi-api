@@ -8,7 +8,8 @@ import {
 } from '../../src/data/twitter-accounts';
 import fs from 'fs/promises';
 
-const MAX_ACCOUNTS_PER_BATCH = -1;
+
+const MAX_ACCOUNTS_PER_BATCH = -1;  //Cap for twitter accounts (or -1 for all)
 const COLLECTION_MINUTES = 15
 
 const allHighPriorityAccounts = getHighPriorityAccounts();
@@ -18,6 +19,7 @@ export async function collect_data() {
     const collectionEnd = new Date();
     const collectionStart = new Date(collectionEnd.getTime() - COLLECTION_MINUTES * 60 * 1000);
 
+    //batchFetchTimelines() automatically ends collection time at current time
     const tweet_results = await twitterClient.batchFetchTimelines(
         highPriorityAccounts.map(a => a.username),
         COLLECTION_MINUTES
