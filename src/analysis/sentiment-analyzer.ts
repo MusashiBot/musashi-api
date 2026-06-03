@@ -80,9 +80,10 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
         hasStrong = true;
       } else if (WEAK_MODIFIERS.includes(prev)) {
         hasWeak = true;
-      } else {
+      } else if (BULLISH_KEYWORDS.includes(prev) || BEARISH_KEYWORDS.includes(prev)) {
         break;
       }
+      // else: filler word (article, preposition, noun) — skip and keep looking back
     }
     const isNegated = negationCount % 2 === 1;
     const weight = hasStrong ? 2 : hasWeak ? 1.5 : 1;
