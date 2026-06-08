@@ -23,7 +23,7 @@ export const MOVERS_PRECOMPUTED_PREFIX = 'movers:precomputed:';
 export const META_LAST_SNAPSHOT_RUN = 'meta:last_snapshot_run';
 export const META_LAST_MOVERS_RUN = 'meta:last_movers_run';
 
-// Snapshot array hard cap. At 5-min cadence, 300 entries covers 25h — enough for
+// Snapshot array hard cap. At 2-min cadence, 300 entries covers ~10h — enough for
 // the 1h and 24h lookbacks the movers endpoint exposes. Without this cap, arrays
 // grew until 7-day TTL expired, bloating KV values and slowing mget linearly.
 const MAX_SNAPSHOTS_PER_MARKET = 300;
