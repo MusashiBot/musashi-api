@@ -4,6 +4,7 @@
 
 import { Market } from '../types/market';
 import { generateKeywords } from './keyword-generator';
+import { isSimpleMarket } from './kalshi-filters';
 
 const KALSHI_API = 'https://api.elections.kalshi.com/trade-api/v2';
 const FETCH_TIMEOUT_MS = 10000; // 10s timeout to prevent hanging on cold starts
@@ -36,27 +37,6 @@ interface KalshiMarketsResponse {
   cursor?: string;
 }
 
-/**
- * Returns true for simple binary YES/NO markets.
- * Filters out complex multi-variable event (parlay/combo) markets whose
- * titles are multi-leg strings like "yes Lakers, yes Celtics, no Bulls..."
- */
-function isSimpleMarket(km: KalshiMarket): boolean {
-  if (!km.title || !km.ticker) return false;
-
-  // MVE / multi-game parlay markets
-  if (km.mve_collection_ticker) return false;
-  if (/MULTIGAME|MVE/i.test(km.ticker)) return false;
-
-  // Titles that start with "yes " are multi-leg combo selections
-  if (/^yes\s/i.test(km.title.trim())) return false;
-
-  // More than 2 commas = likely a multi-leg title
-  const commas = (km.title.match(/,/g) || []).length;
-  if (commas > 2) return false;
-
-  return true;
-}
 
 /**
  * Fetch open markets from Kalshi's public API using cursor pagination.
@@ -98,7 +78,11 @@ export async function fetchKalshiMarkets(
       }
 
       const pageSimple = data.markets
-        .filter(isSimpleMarket)
+        .filter((km) => isSimpleMarket({
+          title: km.title,
+          tickerOrPlatformId: km.ticker,
+          mveCollectionTicker: km.mve_collection_ticker,
+        }))
         .map(toMarket)
         .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
 
