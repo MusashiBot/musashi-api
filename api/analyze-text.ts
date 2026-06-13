@@ -92,23 +92,27 @@ export default async function handler(
       return;
     }
 
-    const { text, minConfidence = 0.3, maxResults = 5 } = body;
+    // Fix C: minConfidence has no hardcoded default here; if the caller omits it,
+    // the KeywordMatcher class default (DEFAULT_MIN_CONFIDENCE) applies.
+    const { text, minConfidence, maxResults = 5 } = body;
 
-    // Validate numeric parameters
-    if (
-      typeof minConfidence !== 'number' ||
-      !Number.isFinite(minConfidence) ||
-      minConfidence < 0 ||
-      minConfidence > 1
-    ) {
-      res.status(400).json({
-        event_id: 'evt_error',
-        signal_type: 'user_interest',
-        urgency: 'low',
-        success: false,
-        error: 'minConfidence must be between 0 and 1.',
-      });
-      return;
+    // Validate numeric parameters (only when caller explicitly provided minConfidence)
+    if (minConfidence !== undefined) {
+      if (
+        typeof minConfidence !== 'number' ||
+        !Number.isFinite(minConfidence) ||
+        minConfidence < 0 ||
+        minConfidence > 1
+      ) {
+        res.status(400).json({
+          event_id: 'evt_error',
+          signal_type: 'user_interest',
+          urgency: 'low',
+          success: false,
+          error: 'minConfidence must be between 0 and 1.',
+        });
+        return;
+      }
     }
 
     if (

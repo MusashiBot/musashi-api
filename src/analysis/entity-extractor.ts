@@ -1,6 +1,8 @@
 // Entity Extractor - Extracts named entities from text
 // People, organizations, tickers, dates for improved matching
 
+import { hasWordBoundaryMatch } from './text-utils';
+
 export interface ExtractedEntities {
   people: string[];       // ["Jerome Powell", "Sam Altman"]
   tickers: string[];      // ["BTC", "NVDA", "TSLA"]
@@ -93,11 +95,13 @@ function extractTickers(text: string): string[] {
  */
 function extractPeople(text: string): string[] {
   const people: string[] = [];
-  const lowerText = text.toLowerCase();
 
-  // Check for known people (case-insensitive)
+  // Fix D: use word-boundary matching so "trump" doesn't match inside "trumpet"
+  // and "donald trump" doesn't match inside the middle of a longer token.
+  // Previously: lowerText.includes(person) — substring match, which produced
+  // false positives on short entries and was inconsistent for multi-word names.
   for (const person of KNOWN_PEOPLE) {
-    if (lowerText.includes(person)) {
+    if (hasWordBoundaryMatch(text, person)) {
       people.push(person);
     }
   }
@@ -131,11 +135,12 @@ function extractPeople(text: string): string[] {
  */
 function extractOrganizations(text: string): string[] {
   const organizations: string[] = [];
-  const lowerText = text.toLowerCase();
 
-  // Check for known organizations (case-insensitive)
+  // Fix D: use word-boundary matching to stop short abbreviations like "fed",
+  // "sec", "ap", "un", "cia" from falsely matching inside "fedex", "second",
+  // "apple", "until", "social", etc. Previously: lowerText.includes(org).
   for (const org of ORGANIZATIONS) {
-    if (lowerText.includes(org)) {
+    if (hasWordBoundaryMatch(text, org)) {
       organizations.push(org);
     }
   }

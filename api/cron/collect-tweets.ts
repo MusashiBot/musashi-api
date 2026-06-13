@@ -88,8 +88,10 @@ export default async function handler(
 
     console.log(`[Cron] Loaded ${markets.length} markets`);
 
-    // Step 2: Initialize KeywordMatcher (lowered threshold from 0.3 to 0.2)
-    const matcher = new KeywordMatcher(markets, 0.2, 5);
+    // Step 2: Initialize KeywordMatcher.
+    // Fix C: minConfidence unified to the class default (DEFAULT_MIN_CONFIDENCE).
+    // Explicit `undefined` in the middle slot preserves positional alignment of maxResults.
+    const matcher = new KeywordMatcher(markets, undefined, 5);
 
     // Step 3: Get arbitrage opportunities (for signal enrichment)
     const arbitrageOpportunities = await getArbitrage(0.03);

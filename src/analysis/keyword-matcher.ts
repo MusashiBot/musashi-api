@@ -3,6 +3,7 @@
 
 import { Market, MarketMatch } from '../types/market';
 import { extractEntities, isEntity, ExtractedEntities } from './entity-extractor';
+import { hasWordBoundaryMatch } from './text-utils';
 
 // ─── Stop words ──────────────────────────────────────────────────────────────
 
@@ -719,36 +720,8 @@ export const SYNONYM_MAP: Record<string, string[]> = {
 };
 
 // ─── Utility functions ───────────────────────────────────────────────────────
-
-/** Returns true if a character is a word character (letter, digit, apostrophe) */
-function isWordChar(ch: string): boolean {
-  const code = ch.charCodeAt(0);
-  return (
-    (code >= 97 && code <= 122) || // a-z
-    (code >= 65 && code <= 90)  || // A-Z
-    (code >= 48 && code <= 57)  || // 0-9
-    code === 39                    // apostrophe
-  );
-}
-
-/**
- * Checks whether `term` appears in `text` as a whole word (respects word boundaries).
- * Avoids creating new RegExp objects per call for performance.
- */
-function hasWordBoundaryMatch(text: string, term: string): boolean {
-  const termLower = term.toLowerCase();
-  const textLower = text.toLowerCase();
-  let idx = textLower.indexOf(termLower);
-  while (idx !== -1) {
-    const before = idx === 0 || !isWordChar(textLower[idx - 1]);
-    const after  =
-      idx + termLower.length >= textLower.length ||
-      !isWordChar(textLower[idx + termLower.length]);
-    if (before && after) return true;
-    idx = textLower.indexOf(termLower, idx + 1);
-  }
-  return false;
-}
+// Fix D: isWordChar and hasWordBoundaryMatch moved to src/analysis/text-utils.ts
+// so that entity-extractor.ts can use the same word-boundary check.
 
 /**
  * Generates unigrams, bigrams, and trigrams from cleaned text.
@@ -842,7 +815,7 @@ const PROMOTIONAL_PATTERNS = [
  * Detect if a tweet is promotional/spam content
  * Returns true if tweet matches promotional patterns
  */
-function isPromotionalContent(text: string): boolean {
+export function isPromotionalContent(text: string): boolean {
   const normalized = text.toLowerCase();
 
   // Check against known promotional patterns
@@ -1021,6 +994,21 @@ function computeScore(r: MatchCounts, market: Market, matchedKeywords: string[])
 
 // ─── KeywordMatcher class ────────────────────────────────────────────────────
 
+// Fix C: single source of truth for the confidence threshold. Previously, three
+// different defaults lived in keyword-matcher.ts (0.22), analyze-text.ts (0.30),
+// and collect-tweets.ts (0.20). Threshold sweep on the labeled dataset of 150
+// tweets identified 0.60 as the precision-maximizing value subject to
+// recall >= 0.60 ("Option B" — bad trades cost more than missed opportunities).
+// Overridable via MUSASHI_MATCHER_MIN_CONFIDENCE env var (must be in [0, 1]).
+export const DEFAULT_MIN_CONFIDENCE = (() => {
+  const raw = process.env.MUSASHI_MATCHER_MIN_CONFIDENCE;
+  if (raw !== undefined) {
+    const parsed = parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  }
+  return 0.6;
+})();
+
 export class KeywordMatcher {
   private markets: Market[];
   private minConfidence: number;
@@ -1028,7 +1016,7 @@ export class KeywordMatcher {
 
   constructor(
     markets: Market[] = [],
-    minConfidence: number = 0.22, // Raised from 0.12 to reduce false positives
+    minConfidence: number = DEFAULT_MIN_CONFIDENCE,
     maxResults: number = 5
   ) {
     this.markets = markets;
@@ -1042,6 +1030,11 @@ export class KeywordMatcher {
   public match(tweetText: string): MarketMatch[] {
     // Filter out very short tweets (likely noise or greetings)
     if (tweetText.trim().length < 20) return [];
+
+    // Fix A: Reject promotional/scam content before keyword scoring runs.
+    // Scam tweets often bait market keywords (Bitcoin, Trump, etc.); without
+    // this check the matcher matches them like real news. See PROMOTIONAL_PATTERNS.
+    if (isPromotionalContent(tweetText)) return [];
 
     // Step 1: Extract entities (people, tickers, organizations, dates)
     const entities = extractEntities(tweetText);
