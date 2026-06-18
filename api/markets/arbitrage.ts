@@ -64,7 +64,7 @@ export default async function handler(
 
     // Enforce a conservative minimum confidence floor so callers cannot bypass
     // the similarity filter by requesting an arbitrarily low confidence.
-    const effectiveMinConfidence = Math.max(minConfidenceNum, 0.5);
+    const effectiveMinConfidence = normalizeMinConfidence(minConfidenceNum);
 
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       res.status(400).json({
@@ -107,7 +107,7 @@ export default async function handler(
         timestamp: new Date().toISOString(),
         filters: {
           minSpread: minSpreadNum,
-          minConfidence: minConfidenceNum,
+          minConfidence: effectiveMinConfidence,
           limit: limitNum,
           category: category || null,
         },

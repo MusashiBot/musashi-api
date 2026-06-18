@@ -23,10 +23,12 @@ function runTests() {
     title: 'Will the market go up?',
     category: 'finance',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['market', 'will', 'go', 'up', 'price'], // Common stop words
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const market2: Market = {
@@ -35,13 +37,16 @@ function runTests() {
     title: 'Will the stock market rise?',
     category: 'finance',
     yesPrice: 0.6,
+    noPrice: 0.4,
     url: '',
+    description: '',
     keywords: ['market', 'will', 'stock', 'rise', 'price'], // Common stop words
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const result1 = areMarketsSimilar(market1, market2);
+  assertEqual(result1.isSimilar, false, 'Test 1: stop-word-heavy markets should be rejected');
   console.log('Test 1 - False positive (should be rejected):');
   console.log(`  Market1: "${market1.title}"`);
   console.log(`  Market2: "${market2.title}"`);
@@ -58,10 +63,12 @@ function runTests() {
     title: 'Will Apple stock hit $200 by end of 2026?',
     category: 'finance',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['apple', 'stock', 'hit', '200', 'end', '2026'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const market4: Market = {
@@ -70,13 +77,16 @@ function runTests() {
     title: 'Will Apple stock reach $200 by end of 2026?',
     category: 'finance',
     yesPrice: 0.55,
+    noPrice: 0.45,
     url: '',
+    description: '',
     keywords: ['apple', 'stock', 'reach', '200', 'end', '2026'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const result2 = areMarketsSimilar(market3, market4);
+  assertEqual(result2.isSimilar, true, 'Test 2: high title similarity should match');
   console.log('Test 2 - True match (should pass):');
   console.log(`  Market3: "${market3.title}"`);
   console.log(`  Market4: "${market4.title}"`);
@@ -92,10 +102,12 @@ function runTests() {
     title: 'Will Tesla stock go up?',
     category: 'finance',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['tesla', 'stock', 'go', 'up'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const market6: Market = {
@@ -104,13 +116,16 @@ function runTests() {
     title: 'Will Tesla win the race?',
     category: 'sports',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['tesla', 'win', 'race'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const result3 = areMarketsSimilar(market5, market6);
+  assertEqual(result3.isSimilar, false, 'Test 3: different categories should be rejected');
   console.log('Test 3 - Different categories (should be rejected):');
   console.log(`  Market5: "${market5.title}" (category: ${market5.category})`);
   console.log(`  Market6: "${market6.title}" (category: ${market6.category})`);
@@ -133,10 +148,12 @@ function runTests() {
     title: 'Federal Reserve interest rate decision',
     category: 'economics',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['federal', 'reserve', 'interest', 'rate', 'decision', 'economy', 'policy'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const market8: Market = {
@@ -145,13 +162,16 @@ function runTests() {
     title: 'Fed rate hike announcement',
     category: 'economics',
     yesPrice: 0.5,
+    noPrice: 0.5,
     url: '',
+    description: '',
     keywords: ['fed', 'rate', 'announcement', 'federal', 'reserve', 'interest', 'policy'],
     volume24h: 0,
-    createdAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
   };
 
   const result4 = areMarketsSimilar(market7, market8);
+  assertEqual(result4.isSimilar, true, 'Test 5: strong keyword overlap should match');
   console.log('Test 4 - Strong keyword overlap (should pass):');
   console.log(`  Market7: "${market7.title}"`);
   console.log(`  Market8: "${market8.title}"`);
@@ -175,12 +195,12 @@ function runTests() {
   console.log(`  Normalized change: ${priceChangeResult?.change} (expected: ${expectedNormalizedChange})`);
   console.log(`  Expected: Normalized to 1h equivalent\n`);
 
-  // Test case 7: minChange validation (would return 400 for < 0.02)
-  const invalidMinChange = 0.01;
-  console.log('Test 7 - minChange validation (API would return 400):');
-  console.log(`  Requested minChange: ${invalidMinChange}`);
-  console.log(`  Expected: 400 error "minChange must be at least 0.02"`);
-  console.log(`  (This is validated in the API handler, not in unit tests)\n`);
+  // Test case 7: sub-bucket minChange snaps down to the smallest bucket (0.02), returns 200
+  const subBucketMinChange = 0.01;
+  console.log('Test 7 - minChange snap-down (API returns 200):');
+  console.log(`  Requested minChange: ${subBucketMinChange}`);
+  console.log(`  Expected: 200, snapped down to the smallest precomputed bucket (0.02)`);
+  console.log(`  (This is handled in the API handler, not in unit tests)\n`);
 
   console.log('Tests completed.');
 }

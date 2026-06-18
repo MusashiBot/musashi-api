@@ -70,7 +70,7 @@ const REQUIRED_SIDE_FIELDS: (keyof MarketSide)[] = [
   'platform', 'title', 'category', 'description', 'resolution_criteria', 'resolution_date', 'url',
 ];
 
-/** Parse JSONL with lightweight structural validation (schema.json covers the rest in CI). */
+/** Parse JSONL with lightweight structural validation (see schema.json for the full field reference). */
 function loadFixtures(file: string): Fixture[] {
   const raw = fs.readFileSync(file, 'utf8');
   const fixtures: Fixture[] = [];
@@ -198,7 +198,7 @@ function parseArgs(argv: string[]) {
   let data = DEFAULT_DATA;
   // Default 0: use each matcher's own isSimilar verdict. Raise to sweep the
   // confidence threshold (e.g. getTopArbitrage's 0.5 floor).
-  let minConfidence = Number(process.env.EVAL_MIN_CONFIDENCE ?? 0);
+  let minConfidence = Number(process.env.EVAL_MIN_CONFIDENCE ?? 0.5);
   let updateBaselines = false;
   let checkBaselines = false;
 
