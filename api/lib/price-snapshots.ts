@@ -23,9 +23,10 @@ export const MOVERS_PRECOMPUTED_PREFIX = 'movers:precomputed:';
 export const META_LAST_SNAPSHOT_RUN = 'meta:last_snapshot_run';
 export const META_LAST_MOVERS_RUN = 'meta:last_movers_run';
 
-// Snapshot array hard cap. At 5-min cadence, 300 entries covers 25h — enough for
-// the 1h and 24h lookbacks the movers endpoint exposes. Without this cap, arrays
-// grew until 7-day TTL expired, bloating KV values and slowing mget linearly.
+// Snapshot array hard cap. At 2-min cadence, 300 entries covers ~10h — enough for
+// the 1h lookback, but NOT a full 24h lookback (that would need ~720 entries at
+// this cadence). Without this cap, arrays grew until 7-day TTL expired, bloating
+// KV values and slowing mget linearly.
 const MAX_SNAPSHOTS_PER_MARKET = 300;
 const SNAPSHOT_DEDUP_WINDOW_MS = 60_000;
 const KV_BATCH_SIZE = 100;
@@ -98,6 +99,13 @@ export async function recordPriceSnapshots(markets: Market[]): Promise<{
   return { written, skipped, errors };
 }
 
+// Minimum elapsed time (hours) between the two compared snapshots. Below this,
+// the hoursAgo/actualHoursElapsed normalization factor amplifies a near-zero gap
+// into an unrealistic swing (and at exactly zero produces NaN/Infinity). At the
+// 2-min snapshot cadence with the ±0.5×hoursAgo tolerance above, legitimate 1h+
+// lookbacks always clear this floor — it only rejects degenerate near-zero gaps.
+const MIN_ELAPSED_HOURS = 0.25;
+
 export function computePriceChange(
   snapshots: PriceSnapshot[] | null,
   hoursAgo: number,
@@ -121,8 +129,21 @@ export function computePriceChange(
   // overstates change magnitude — see prior FIX 7 in the original code.
   if (closestDiff > hoursAgo * 60 * 60 * 1000 * 0.5) return null;
 
+  const rawChange = current.yesPrice - closest.yesPrice;
+  const actualHoursElapsed = (current.timestamp - closest.timestamp) / (60 * 60 * 1000);
+
+  // Guard the normalization below: if the closest snapshot IS the current one,
+  // or the elapsed time is zero/negative/too small, hoursAgo/actualHoursElapsed
+  // would be NaN, Infinity, or a wildly overstated change. Treat as no signal.
+  if (closest === current || actualHoursElapsed < MIN_ELAPSED_HOURS) return null;
+
+  // Normalize the change to represent a true hoursAgo equivalent.
+  // If the closest snapshot is 90 minutes ago instead of 60, scale down the change
+  // proportionally to avoid overstating movement when snapshots aren't exactly hoursAgo apart.
+  const normalizedChange = rawChange * (hoursAgo / actualHoursElapsed);
+
   return {
-    change: current.yesPrice - closest.yesPrice,
+    change: normalizedChange,
     previousPrice: closest.yesPrice,
   };
 }

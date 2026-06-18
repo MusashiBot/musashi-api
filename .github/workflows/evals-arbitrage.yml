@@ -1,0 +1,47 @@
+# Required CI check for the arbitrage matching eval.
+#
+# Deterministic, fixture-only: typechecks the eval runner (which lives outside
+# the project tsconfig's include) and runs it against dev.jsonl in
+# --check-baselines mode. Fails if either matcher regresses against the
+# committed baselines in evals/baselines/.
+#
+# Live API/DB evals are intentionally NOT run here — they stay manual.
+
+name: evals-arbitrage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  arbitrage-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # evals/ is outside tsconfig's include (src/, scripts/), so typecheck the
+      # runner explicitly with the same flags the project tsconfig uses.
+      - name: Typecheck eval runner
+        run: >
+          pnpm exec tsc --noEmit --strict
+          --module ESNext --moduleResolution node --target ES2020
+          --esModuleInterop --skipLibCheck --types node
+          evals/runners/arbitrage.ts evals/runners/bm25-matcher.ts
+
+      - name: Run arbitrage eval (fails on regression vs baselines)
+        run: node --import tsx evals/runners/arbitrage.ts --check-baselines

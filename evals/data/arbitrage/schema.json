@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://musashi/evals/arbitrage/fixture.schema.json",
+  "title": "Arbitrage market-pair fixture",
+  "description": "One labeled cross-platform (Polymarket <-> Kalshi) market pair. JSONL: one object of this schema per line. Used by the deterministic arbitrage matching eval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pair_id", "polymarket", "kalshi", "label", "adjudication"],
+  "properties": {
+    "pair_id": {
+      "type": "string",
+      "description": "Stable, never-reused identifier for this pair.",
+      "pattern": "^arb-[0-9]{4,}$"
+    },
+    "polymarket": {
+      "allOf": [
+        { "$ref": "#/$defs/marketSide" },
+        { "properties": { "platform": { "const": "polymarket" } } }
+      ],
+      "description": "The Polymarket side of the pair."
+    },
+    "kalshi": {
+      "allOf": [
+        { "$ref": "#/$defs/marketSide" },
+        { "properties": { "platform": { "const": "kalshi" } } }
+      ],
+      "description": "The Kalshi side of the pair."
+    },
+    "label": {
+      "type": "string",
+      "enum": ["match", "non_match", "uncertain"],
+      "description": "Ground truth. 'match' = same underlying event. 'uncertain' = still unclear after adjudicating on title, category, dates, URLs and resolution criteria; excluded from precision/recall scoring."
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rationale", "signals_used", "adjudicated_by", "adjudicated_at"],
+      "properties": {
+        "rationale": {
+          "type": "string",
+          "description": "Why this label was assigned, citing the signals used.",
+          "minLength": 1
+        },
+        "signals_used": {
+          "type": "array",
+          "description": "Which signals settled the label, in Taylor's adjudication order.",
+          "items": {
+            "type": "string",
+            "enum": ["title", "category", "resolution_date", "url", "resolution_criteria"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "adjudicated_by": { "type": "string", "minLength": 1 },
+        "adjudicated_at": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO date (YYYY-MM-DD)."
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form slices for stratified split and error analysis, e.g. 'paraphrase', 'rare-term-coincidence', 'cross-category', 'definition-mismatch'.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["live_snapshot", "synthetic", "manual"]
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date",
+          "description": "When the live market data was captured (for type 'live_snapshot')."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "marketSide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "title", "category", "description", "resolution_criteria", "resolution_date", "url"],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": ["polymarket", "kalshi"]
+        },
+        "market_id": {
+          "type": "string",
+          "description": "Optional platform id for traceability, e.g. 'polymarket-0x...' or 'kalshi-TICKER'."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Market question/title, as shown on the platform."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Category slug as produced by the platform clients' inferCategory (the matcher's hard gate), e.g. 'crypto', 'us_politics', 'economics', 'sports'."
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "Raw description text fed to keyword generation. Present for Polymarket, typically null for Kalshi (matches runtime)."
+        },
+        "resolution_criteria": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable resolution rules, used for adjudication. May differ from 'description'."
+        },
+        "resolution_date": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO date the market resolves (= Market.endDate)."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Direct link to the market on the platform."
+        }
+      }
+    }
+  }
+}
