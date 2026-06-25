@@ -1,0 +1,118 @@
+[eval] Loaded snapshot: 79 markets from C:\Users\tanis\OneDrive\Desktop\Mushashi\musashi-api\scripts\eval-fixtures\markets-snapshot-2026-06-02.json
+[eval] Loaded dataset: 150 entries from C:\Users\tanis\OneDrive\Desktop\Mushashi\musashi-api\scripts\eval-fixtures\dataset-2026-06-02.jsonl
+[eval] Running KeywordMatcher pass...
+[eval] Running EmbeddingMatcher pass (may take a few minutes)...
+[eval] embedding: 25/150
+[eval] embedding: 50/150
+[eval] embedding: 75/150
+[eval] embedding: 100/150
+[eval] embedding: 125/150
+[eval] embedding: 150/150
+
+══════════════════════════════════════════════════════════════════════════════════════
+  KeywordMatcher  |  threshold=0.6  |  topK=5  |  N=150
+══════════════════════════════════════════════════════════════════════════════════════
+  Category                   N    Prec  Recall      F1     MRR      TP/FP/FN
+  ──────────────────────────────────────────────────────────────────────────────────
+  synthetic_bigram          25   0.000   0.000   0.000   0.000         0/8/0
+  synthetic_entity          25   0.000   0.000   0.000   0.000         0/0/0
+  synthetic_numeric         25   0.000   0.000   0.000   0.000        0/26/0
+  synthetic_promo           25   0.000   0.000   0.000   0.000         0/0/0
+  breaking_news             10   0.333   0.714   0.455   0.556        5/10/2
+  crypto                     6   0.438   0.700   0.538   0.740         7/9/3
+  economics                  1   0.000   0.000   0.000   0.000         0/0/0
+  finance                    9   0.250   0.333   0.286   0.667         2/6/4
+  geopolitics                6   0.000   0.000   0.000   0.000         0/4/0
+  politics                   5   0.200   1.000   0.333   0.500         1/4/0
+  sports                    12   0.000   0.000   0.000   0.000         0/2/0
+  technology                 1   0.000   0.000   0.000   0.000         0/0/0
+  ──────────────────────────────────────────────────────────────────────────────────
+  OVERALL                  150   0.179   0.625   0.278   0.656       15/69/9
+══════════════════════════════════════════════════════════════════════════════════════
+
+══════════════════════════════════════════════════════════════════════════════════════
+  EmbeddingMatcher (Gemini)  |  minSimilarity=0.65  |  topK=5  |  N=150
+══════════════════════════════════════════════════════════════════════════════════════
+  Category                   N    Prec  Recall      F1     MRR      TP/FP/FN
+  ──────────────────────────────────────────────────────────────────────────────────
+  synthetic_bigram          25   0.000   0.000   0.000   0.000         0/0/0
+  synthetic_entity          25   0.000   0.000   0.000   0.000         0/0/0
+  synthetic_numeric         25   0.000   0.000   0.000   0.000         0/4/0
+  synthetic_promo           25   0.000   0.000   0.000   0.000         0/0/0
+  breaking_news             10   0.625   0.714   0.667   0.833         5/3/2
+  crypto                     6   0.438   0.700   0.538   0.800         7/9/3
+  economics                  1   0.000   0.000   0.000   0.000         0/0/0
+  finance                    9   0.625   0.833   0.714   1.000         5/3/1
+  geopolitics                6   0.000   0.000   0.000   0.000         0/0/0
+  politics                   5   0.000   0.000   0.000   0.000         0/1/1
+  sports                    12   0.000   0.000   0.000   0.000         0/0/0
+  technology                 1   0.000   0.000   0.000   0.000         0/0/0
+  ──────────────────────────────────────────────────────────────────────────────────
+  OVERALL                  150   0.459   0.708   0.557   0.792       17/20/7
+══════════════════════════════════════════════════════════════════════════════════════
+
+══════════════════════════════════════════════════════════════════════════════════════
+  Comparison (overall)
+══════════════════════════════════════════════════════════════════════════════════════
+  Matcher                     Prec  Recall      F1     MRR        TP/FP/FN
+  ──────────────────────────────────────────────────────────────────────────────────
+  Keyword                    0.179   0.625   0.278   0.656         15/69/9
+  Embedding (Gemini)         0.459   0.708   0.557   0.792         17/20/7
+  ──────────────────────────────────────────────────────────────────────────────────
+  Δ F1 (embedding - keyword) = +0.280
+══════════════════════════════════════════════════════════════════════════════════════
+
+
+══════════════════════════════════════════════════════════════════════════════════════
+  BEFORE / AFTER SUMMARY (this PR)
+══════════════════════════════════════════════════════════════════════════════════════
+
+  KEYWORD MATCHER PROGRESSION  (production code path):
+
+  Stage                                       Correct (TP)   Wrong (FP)     F1
+  ────────────────────────────────────────────────────────────────────────────────
+  Baseline (before any fix)                       ~16            185        0.167
+  After Fix A (wire in scam filter)               ~15            117        0.237
+  After Fix C (unified threshold @ 0.60)           15             78        0.256
+  After Fix D (entity substring fix)               15             78        0.256
+  Final (today, with temporal drift)               15             69        0.278
+
+  Δ baseline → final:    ~-1 TP   /   -116 FPs (-63%)   /   +0.111 F1 (+66%)
+
+
+  EMBEDDING MATCHER  (NEW IN THIS PR; eval-only, not in production):
+
+  Stage                                       Correct (TP)   Wrong (FP)     F1
+  ────────────────────────────────────────────────────────────────────────────────
+  Without scam filter (initial run)                17             68        0.312
+  With scam filter applied (final)                 17             20        0.557
+
+  Δ scam filter applied:    0 TP   /   -48 FPs (-71%)   /   +0.245 F1
+
+
+  HEAD-TO-HEAD AT FINAL STATE  (this run):
+
+  Matcher                                     Correct (TP)   Wrong (FP)     F1
+  ────────────────────────────────────────────────────────────────────────────────
+  Keyword matcher (production)                     15             69        0.278
+  Embedding matcher (new, eval-only)               17             20        0.557
+
+  Δ embedding vs keyword:    +2 TP   /   -49 FPs   /   +0.279 F1
+
+══════════════════════════════════════════════════════════════════════════════════════
+
+  NOTES
+  ─────
+  - Dataset: 150 labeled tweets (50 real Musashi feed + 100 synthetic traps).
+  - Snapshot: 79 frozen markets across crypto, politics, sports, finance,
+    geopolitics, breaking news.
+  - The "~" on baseline TPs reflects that I did not save the baseline TP/FN
+    breakdown to disk before applying the fixes; only the FP and F1 numbers
+    were captured at each fix step.
+  - "Temporal drift" on the final keyword row: the matcher scores markets
+    partly by recency (markets ending soon score higher), so the same code
+    produces slightly different numbers as the snapshot ages. Final keyword
+    F1 drifted from 0.256 → 0.278 between June 5 and June 10 with no code
+    change. Not a bug — just a property of the eval setup.
+
+══════════════════════════════════════════════════════════════════════════════════════

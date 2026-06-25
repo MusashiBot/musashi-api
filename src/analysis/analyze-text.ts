@@ -20,9 +20,10 @@ export async function analyzeText(
   const startTime = Date.now();
 
   // Step 1: Match markets using keyword matcher
+  // Fix C: pass minConfidence through (undefined → class default), no longer hardcoded.
   const matcher = new KeywordMatcher(
     markets,
-    options?.minConfidence ?? 0.3,
+    options?.minConfidence,
     options?.maxResults ?? 5
   );
   const matches = matcher.match(text);
@@ -57,9 +58,10 @@ export async function analyzeTextWithArbitrage(
   const startTime = Date.now();
 
   // Step 1: Match markets
+  // Fix C: pass minConfidence through (undefined → class default), no longer hardcoded.
   const matcher = new KeywordMatcher(
     markets,
-    options?.minConfidence ?? 0.3,
+    options?.minConfidence,
     options?.maxResults ?? 5
   );
   const matches = matcher.match(text);
@@ -91,7 +93,8 @@ export async function analyzeTextWithArbitrage(
 export function simpleMatch(
   text: string,
   markets: Market[],
-  minConfidence: number = 0.3,
+  // Fix C: minConfidence now optional. Undefined → class default (0.6).
+  minConfidence?: number,
   maxResults: number = 5
 ): MarketMatch[] {
   const matcher = new KeywordMatcher(markets, minConfidence, maxResults);
