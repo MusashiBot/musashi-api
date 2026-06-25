@@ -213,25 +213,29 @@ export default async function handler(
       }
     }
 
+    // Fix C: min_confidence has no hardcoded default here; if the caller omits it,
+    // the KeywordMatcher class default (DEFAULT_MIN_CONFIDENCE) applies.
     const {
       claim,
       llm_estimate = null,
-      min_confidence = 0.3,
+      min_confidence,
       max_markets = 5,
     } = body;
 
-    // Validate numeric parameters
-    if (
-      typeof min_confidence !== 'number' ||
-      !Number.isFinite(min_confidence) ||
-      min_confidence < 0 ||
-      min_confidence > 1
-    ) {
-      res.status(400).json({
-        success: false,
-        error: 'min_confidence must be between 0 and 1.',
-      });
-      return;
+    // Validate numeric parameters (only when caller explicitly provided min_confidence)
+    if (min_confidence !== undefined) {
+      if (
+        typeof min_confidence !== 'number' ||
+        !Number.isFinite(min_confidence) ||
+        min_confidence < 0 ||
+        min_confidence > 1
+      ) {
+        res.status(400).json({
+          success: false,
+          error: 'min_confidence must be between 0 and 1.',
+        });
+        return;
+      }
     }
 
     if (

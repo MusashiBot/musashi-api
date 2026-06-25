@@ -142,8 +142,9 @@ export default async function handler(
         // Analyze tweet through existing pipeline
         const matches = matcher.match(rawTweet.text);
 
-        // Skip tweets with no market matches or low confidence (lowered from 0.3 to 0.2)
-        if (matches.length === 0 || matches[0].confidence < 0.2) {
+        // Fix C: the matcher already filters by DEFAULT_MIN_CONFIDENCE, so anything
+        // returned here is above that bar. No second threshold check.
+        if (matches.length === 0) {
           continue;
         }
 
@@ -213,7 +214,7 @@ export default async function handler(
       //       totalAnalyzed++;
 
       //       const matches = matcher.match(rawTweet.text);
-      //       if (matches.length === 0 || matches[0].confidence < 0.2) {
+      //       if (matches.length === 0) {
       //         continue;
       //       }
 

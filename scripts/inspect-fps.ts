@@ -11,7 +11,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { KeywordMatcher } from '../src/analysis/keyword-matcher';
+import { KeywordMatcher, DEFAULT_MIN_CONFIDENCE } from '../src/analysis/keyword-matcher';
 import type { Market } from '../src/types/market';
 
 const FIXTURES_DIR = resolve(process.cwd(), 'scripts', 'eval-fixtures');
@@ -42,7 +42,7 @@ const ds = readFileSync(findLatest('dataset-', '.jsonl'), 'utf-8')
 const categoryFilter = process.argv[2];
 const entries = categoryFilter ? ds.filter((d) => d.category === categoryFilter) : ds;
 
-const m = new KeywordMatcher(snap.markets, 0.22, 5);
+const m = new KeywordMatcher(snap.markets, DEFAULT_MIN_CONFIDENCE, 5);
 
 console.log(`Inspecting ${entries.length} entries${categoryFilter ? ` in category "${categoryFilter}"` : ''}\n`);
 
