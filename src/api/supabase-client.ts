@@ -4,6 +4,8 @@ export const TABLES = {
   accounts: 'user_accounts',
   pluginUsage: 'plugin_usage_records',
   subscriptions: 'orders_subscriptions',
+  arbitrageOpportunities: 'arbitrage_opportunities',
+  arbitrageSnapshots: 'arbitrage_snapshots',
 } as const;
 
 export type AppDatabase = {
@@ -66,6 +68,77 @@ export type AppDatabase = {
           activity_at?: string;
           metadata?: Record<string, unknown> | null;
         };
+      };
+      arbitrage_opportunities: {
+        Row: {
+          id: string;
+          polymarket_id: string;
+          kalshi_id: string;
+          polymarket_title: string;
+          kalshi_title: string;
+          category: string | null;
+          match_reason: string | null;
+          max_spread: number;
+          observation_count: number;
+          first_seen_at: string;
+          last_seen_at: string;
+          closed_at: string | null;
+          status: 'active' | 'closed';
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          polymarket_id: string;
+          kalshi_id: string;
+          polymarket_title: string;
+          kalshi_title: string;
+          category?: string | null;
+          match_reason?: string | null;
+          max_spread: number;
+          observation_count?: number;
+          first_seen_at?: string;
+          last_seen_at?: string;
+          closed_at?: string | null;
+          status?: 'active' | 'closed';
+          created_at?: string;
+        };
+        Update: {
+          max_spread?: number;
+          observation_count?: number;
+          last_seen_at?: string;
+          closed_at?: string | null;
+          status?: 'active' | 'closed';
+          match_reason?: string | null;
+        };
+      };
+      arbitrage_snapshots: {
+        Row: {
+          id: string;
+          opportunity_id: string;
+          polymarket_yes_price: number;
+          kalshi_yes_price: number;
+          spread: number;
+          profit_potential: number;
+          direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
+          confidence: number;
+          polymarket_volume_24h: number | null;
+          kalshi_volume_24h: number | null;
+          observed_at: string;
+        };
+        Insert: {
+          id?: string;
+          opportunity_id: string;
+          polymarket_yes_price: number;
+          kalshi_yes_price: number;
+          spread: number;
+          profit_potential: number;
+          direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
+          confidence: number;
+          polymarket_volume_24h?: number | null;
+          kalshi_volume_24h?: number | null;
+          observed_at?: string;
+        };
+        Update: Record<string, never>; // snapshots are immutable
       };
       orders_subscriptions: {
         Row: {
