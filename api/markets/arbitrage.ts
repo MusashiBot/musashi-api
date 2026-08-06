@@ -87,6 +87,13 @@ export default async function handler(
       .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
       .slice(0, limitNum);
 
+    // add volume alias to market objects because bot uses volume instead of volume24h
+    const opportunitiesAlias = opportunities.map (arb => ({
+      ...arb,
+      polymarket: { ...arb.polymarket, volume: arb.polymarket.volume24h },
+      kalshi: { ...arb.kalshi,     volume: arb.kalshi.volume24h },
+    }));
+
     // Stage 0: Get freshness metadata
     const freshnessMetadata = getMarketMetadata();
 
@@ -94,7 +101,8 @@ export default async function handler(
     const response = {
       success: true,
       data: {
-        opportunities,
+        opportunities: opportunitiesAlias,
+        arbitrage_opportunities : opportunitiesAlias, //a key mismatch from bot
         count: opportunities.length,
         timestamp: new Date().toISOString(),
         filters: {
