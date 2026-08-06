@@ -67,8 +67,17 @@ function calculateTitleSimilarity(title1: string, title2: string): number {
  * Returns the number of shared keywords
  */
 function calculateKeywordOverlap(market1: Market, market2: Market): number {
-  const keywords1 = new Set(market1.keywords);
-  const keywords2 = new Set(market2.keywords);
+  const stopWords = new Set([
+    'market', 'price', 'will', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+    'an', 'a', 'is', 'are', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could',
+    'should', 'would', 'may', 'might', 'must', 'shall', 'will', 'can', 'may', 'might', 'must', 'ought',
+    'dare', 'need', 'used', 'get', 'make', 'go', 'know', 'take', 'see', 'come', 'think', 'look', 'want',
+    'give', 'use', 'find', 'tell', 'ask', 'work', 'seem', 'feel', 'try', 'leave', 'call', 'hit', 'reach',
+    'win', 'lose', 'pass', 'than', 'over', 'under'
+  ]);
+
+  const keywords1 = new Set(market1.keywords.filter(kw => !stopWords.has(kw.toLowerCase())));
+  const keywords2 = new Set(market2.keywords.filter(kw => !stopWords.has(kw.toLowerCase())));
 
   let overlap = 0;
   for (const kw of keywords1) {
@@ -84,17 +93,13 @@ function calculateKeywordOverlap(market1: Market, market2: Market): number {
  * Check if two markets refer to the same event
  * Uses title similarity + keyword overlap + category matching
  */
-function areMarketsSimilar(poly: Market, kalshi: Market): {
+export function areMarketsSimilar(poly: Market, kalshi: Market): {
   isSimilar: boolean;
   confidence: number;
   reason: string;
 } {
-  // Must be in the same category (or one is 'other')
-  const categoryMatch = poly.category === kalshi.category ||
-                       poly.category === 'other' ||
-                       kalshi.category === 'other';
-
-  if (!categoryMatch) {
+  // Must be in the same category
+  if (poly.category !== kalshi.category) {
     return { isSimilar: false, confidence: 0, reason: 'Different categories' };
   }
 
@@ -116,8 +121,8 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     };
   }
 
-  if (keywordOverlap >= 3) {
-    const confidence = Math.min(keywordOverlap / 10, 0.9); // Cap at 0.9
+  if (keywordOverlap >= 4) {
+    const confidence = Math.min(0.5 + (keywordOverlap - 4) * 0.05, 0.9); // 4 keywords => 0.5, +0.05 per extra keyword
     return {
       isSimilar: true,
       confidence,
@@ -125,12 +130,12 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     };
   }
 
-  // Check for exact entity matches (strong signal even with low overall similarity)
+  // Check for exact entity matches (strong signal only when titles are still fairly similar)
   const polyEntities = extractEntities(poly.title);
   const kalshiEntities = extractEntities(kalshi.title);
   const sharedEntities = Array.from(polyEntities).filter(e => kalshiEntities.has(e));
 
-  if (sharedEntities.length >= 2 && titleSim > 0.3) {
+  if (sharedEntities.length >= 3 && titleSim > 0.45) {
     return {
       isSimilar: true,
       confidence: 0.7,
