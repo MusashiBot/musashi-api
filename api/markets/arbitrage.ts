@@ -1,6 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
 
+export function normalizeMinConfidence(minConfidence: number): number {
+  return Math.max(minConfidence, 0.5);
+}
+
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -58,6 +62,10 @@ export default async function handler(
       return;
     }
 
+    // Enforce a conservative minimum confidence floor so callers cannot bypass
+    // the similarity filter by requesting an arbitrarily low confidence.
+    const effectiveMinConfidence = Math.max(minConfidenceNum, 0.5);
+
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       res.status(400).json({
         success: false,
@@ -83,7 +91,7 @@ export default async function handler(
     // Apply additional filters client-side
     // Note: opportunities are already sorted by spread descending from detectArbitrage()
     opportunities = opportunities
-      .filter(arb => arb.confidence >= minConfidenceNum)
+      .filter(arb => arb.confidence >= effectiveMinConfidence)
       .filter(arb => !category || arb.polymarket.category === category || arb.kalshi.category === category)
       .slice(0, limitNum);
 

@@ -69,6 +69,14 @@ export default async function handler(
       return;
     }
 
+    if (minChangeNum < 0.02) {
+      res.status(400).json({
+        success: false,
+        error: 'minChange must be at least 0.02 (the smallest precomputed bucket).',
+      });
+      return;
+    }
+
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       res.status(400).json({
         success: false,

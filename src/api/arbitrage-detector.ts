@@ -63,50 +63,97 @@ function calculateTitleSimilarity(title1: string, title2: string): number {
 }
 
 /**
- * Calculate keyword overlap between two markets
- * Returns the number of shared keywords
+ * BM25 corpus statistics. Built once per detectArbitrage() call over the full
+ * candidate pool so IDF reflects term-rarity across all markets being compared,
+ * not just the pair under inspection.
  */
-function calculateKeywordOverlap(market1: Market, market2: Market): number {
-  const keywords1 = new Set(market1.keywords);
-  const keywords2 = new Set(market2.keywords);
+export interface BM25Stats {
+  idf: Map<string, number>;
+  avgdl: number;
+  N: number;
+}
 
-  let overlap = 0;
-  for (const kw of keywords1) {
-    if (keywords2.has(kw)) {
-      overlap++;
+const BM25_K1 = 1.5;
+const BM25_B = 0.75;
+// Tuned against arbitrage-detector.test.ts: rejects rare-term coincidences and
+// the stop-word-heavy false-positive case while still matching paraphrased
+// titles and Trump-2028-style high-volume overlaps.
+const BM25_MATCH_THRESHOLD = 0.4;
+
+/**
+ * Build BM25 corpus stats from a set of markets. tf is implicitly 1 per term
+ * since Market.keywords is already deduplicated by the keyword generator.
+ * Uses the BM25+ IDF variant (+1 inside log) so weights stay non-negative on
+ * small corpora.
+ */
+export function buildBM25Stats(markets: Market[]): BM25Stats {
+  const df = new Map<string, number>();
+  let totalLen = 0;
+
+  for (const m of markets) {
+    const terms = new Set(m.keywords);
+    totalLen += terms.size;
+    for (const term of terms) {
+      df.set(term, (df.get(term) ?? 0) + 1);
     }
   }
 
-  return overlap;
+  const N = markets.length;
+  const avgdl = N > 0 ? totalLen / N : 0;
+  const idf = new Map<string, number>();
+  for (const [term, freq] of df) {
+    idf.set(term, Math.log((N - freq + 0.5) / (freq + 0.5) + 1));
+  }
+
+  return { idf, avgdl, N };
+}
+
+/** Asymmetric BM25: score `doc`'s relevance to `query`. */
+function bm25Score(query: Market, doc: Market, stats: BM25Stats): number {
+  const docTerms = new Set(doc.keywords);
+  const dl = docTerms.size;
+  const lenNorm = stats.avgdl > 0 ? 1 - BM25_B + BM25_B * (dl / stats.avgdl) : 1;
+  const denom = 1 + BM25_K1 * lenNorm;
+
+  let score = 0;
+  for (const term of new Set(query.keywords)) {
+    if (!docTerms.has(term)) continue;
+    const idf = stats.idf.get(term) ?? 0;
+    score += (idf * (BM25_K1 + 1)) / denom;
+  }
+  return score;
 }
 
 /**
- * Check if two markets refer to the same event
- * Uses title similarity + keyword overlap + category matching
+ * Symmetric BM25 similarity in [0, 1] via self-score normalization.
+ * Averaging both directions makes the score order-independent; dividing by
+ * mean self-score keeps it bounded and interpretable as a confidence.
  */
-function areMarketsSimilar(poly: Market, kalshi: Market): {
+function bm25Similarity(a: Market, b: Market, stats: BM25Stats): number {
+  const raw = 0.5 * (bm25Score(a, b, stats) + bm25Score(b, a, stats));
+  const selfBound = 0.5 * (bm25Score(a, a, stats) + bm25Score(b, b, stats));
+  if (selfBound <= 0) return 0;
+  return Math.min(raw / selfBound, 1);
+}
+
+/**
+ * Check if two markets refer to the same event.
+ * Three signals, in order: category gate, title similarity, BM25 keyword
+ * similarity. Entity overlap acts as a tiebreaker when title similarity is
+ * borderline. BM25 stats must be precomputed once over the full candidate
+ * pool — passing a stats object built from only the pair degenerates IDF.
+ */
+export function areMarketsSimilar(poly: Market, kalshi: Market, stats: BM25Stats): {
   isSimilar: boolean;
   confidence: number;
   reason: string;
 } {
-  // Must be in the same category (or one is 'other')
-  const categoryMatch = poly.category === kalshi.category ||
-                       poly.category === 'other' ||
-                       kalshi.category === 'other';
-
-  if (!categoryMatch) {
+  // Must be in the same category
+  if (poly.category !== kalshi.category) {
     return { isSimilar: false, confidence: 0, reason: 'Different categories' };
   }
 
-  // Calculate title similarity
   const titleSim = calculateTitleSimilarity(poly.title, kalshi.title);
-
-  // Calculate keyword overlap
-  const keywordOverlap = calculateKeywordOverlap(poly, kalshi);
-
-  // Matching criteria (needs at least one strong signal):
-  // 1. High title similarity (>0.5) OR
-  // 2. Strong keyword overlap (3+ shared keywords)
 
   if (titleSim > 0.5) {
     return {
@@ -116,21 +163,22 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     };
   }
 
-  if (keywordOverlap >= 3) {
-    const confidence = Math.min(keywordOverlap / 10, 0.9); // Cap at 0.9
+  const bm25Sim = bm25Similarity(poly, kalshi, stats);
+
+  if (bm25Sim > BM25_MATCH_THRESHOLD) {
     return {
       isSimilar: true,
-      confidence,
-      reason: `${keywordOverlap} shared keywords`
+      confidence: bm25Sim,
+      reason: `BM25 similarity ${(bm25Sim * 100).toFixed(0)}%`
     };
   }
 
-  // Check for exact entity matches (strong signal even with low overall similarity)
+  // Check for exact entity matches (strong signal only when titles are still fairly similar)
   const polyEntities = extractEntities(poly.title);
   const kalshiEntities = extractEntities(kalshi.title);
   const sharedEntities = Array.from(polyEntities).filter(e => kalshiEntities.has(e));
 
-  if (sharedEntities.length >= 2 && titleSim > 0.3) {
+  if (sharedEntities.length >= 3 && titleSim > 0.45) {
     return {
       isSimilar: true,
       confidence: 0.7,
@@ -160,10 +208,14 @@ export function detectArbitrage(
 
   console.log(`[Arbitrage] Checking ${polymarkets.length} Polymarket × ${kalshiMarkets.length} Kalshi markets`);
 
+  // Build BM25 stats once over the full candidate pool so IDF reflects
+  // term-rarity across all markets, not just the current pair.
+  const stats = buildBM25Stats([...polymarkets, ...kalshiMarkets]);
+
   // Compare each Polymarket market with each Kalshi market
   for (const poly of polymarkets) {
     for (const kalshi of kalshiMarkets) {
-      const similarity = areMarketsSimilar(poly, kalshi);
+      const similarity = areMarketsSimilar(poly, kalshi, stats);
 
       if (!similarity.isSimilar) continue;
 
