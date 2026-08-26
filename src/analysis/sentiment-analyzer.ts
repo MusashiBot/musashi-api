@@ -17,27 +17,40 @@ const BULLISH_KEYWORDS = [
   'confirmed', 'happening', 'inevitable', 'obvious', 'clearly', 'certain',
   'guarantee', 'lock', 'easy', 'confident', 'predict', 'will happen',
   'going to', 'up', 'rise', 'increase', 'gain', 'profit', 'success',
-  'boom', 'growth', 'explosive', 'parabolic', 'breakout'
+  'boom', 'growth', 'explosive', 'parabolic', 'breakout',
+  'succeed',
 ];
 
 // Bearish indicators
 const BEARISH_KEYWORDS = [
   'bearish', 'dump', 'crash', 'plunge', 'tank', 'collapse', 'fall',
-  'sell', 'short', 'puts', 'red', 'lose', 'losing', 'no', 'impossible',
-  'unlikely', 'doubt', 'skeptical', 'concern', 'worried', 'fear', 'risk',
+  'sell', 'short', 'puts', 'red', 'lose', 'losing', 'no', 'doubt',
+  'skeptical', 'concern', 'worried', 'fear', 'risk',
   'down', 'decline', 'drop', 'decrease', 'loss', 'fail', 'failure',
-  'bubble', 'overvalued', 'recession', 'bear', 'correction'
+  'bubble', 'overvalued', 'recession', 'bear', 'correction',
+  'unlikely', 'impossible',
 ];
 
-// Strong modifiers (increase weight)
+// Strong modifiers — double the weight of the following keyword (e.g. "extremely bullish")
 const STRONG_MODIFIERS = [
   'very', 'extremely', 'highly', 'absolutely', 'completely', 'totally',
-  'definitely', 'certainly', 'obviously', 'clearly', 'strongly', 'really'
+  'definitely', 'certainly', 'obviously', 'clearly', 'strongly', 'really',
+];
+
+// Weak modifiers — probability/likelihood words that boost weight by 1.5×
+// These don't score on their own; they amplify an adjacent sentiment keyword.
+// e.g. "likely crash" → crash scored at 1.5 instead of 1
+const WEAK_MODIFIERS = [
+  'likely', 'probable', 'probably', 'possible', 'possibly',
+  'expected', 'anticipated', 'projected', 'seemingly', 'apparently',
+  'arguably', 'presumably', 'supposedly', 'reportedly',
+  'could', 'should', 'might', 'may', 'seems',
 ];
 
 // Negations (reverse sentiment)
 const NEGATIONS = [
   'not', 'no', "don't", "won't", "can't", "isn't", "aren't", "doesn't",
+  'dont', 'wont', 'cant', 'isnt', 'arent', 'doesnt',
   'never', 'neither', 'nor', 'none', 'nobody', 'nothing', 'nowhere'
 ];
 
@@ -53,14 +66,28 @@ export function analyzeSentiment(tweetText: string): SentimentResult {
 
   for (let i = 0; i < words.length; i++) {
     const word = words[i].replace(/[^a-z]/g, '');
-    const prevWord = i > 0 ? words[i - 1].replace(/[^a-z]/g, '') : '';
 
-    // Check for negation
-    const isNegated = NEGATIONS.includes(prevWord);
-
-    // Check for strong modifier
-    const isStrong = STRONG_MODIFIERS.includes(prevWord);
-    const weight = isStrong ? 2 : 1;
+    // Walk backwards through adjacent negations/modifiers.
+    // Odd negation count = negated; strong modifier = 2× weight; weak modifier = 1.5× weight.
+    let negationCount = 0;
+    let hasStrong = false;
+    let hasWeak = false;
+    for (let j = i - 1; j >= 0; j--) {
+      if (/[.!?;]/.test(words[j])) break;
+      const prev = words[j].replace(/[^a-z]/g, '');
+      if (NEGATIONS.includes(prev)) {
+        negationCount++;
+      } else if (STRONG_MODIFIERS.includes(prev)) {
+        hasStrong = true;
+      } else if (WEAK_MODIFIERS.includes(prev)) {
+        hasWeak = true;
+      } else if (BULLISH_KEYWORDS.includes(prev) || BEARISH_KEYWORDS.includes(prev)) {
+        break;
+      }
+      // else: filler word (article, preposition, noun) — skip and keep looking back
+    }
+    const isNegated = negationCount % 2 === 1;
+    const weight = hasStrong ? 2 : hasWeak ? 1.5 : 1;
 
     // Check bullish
     if (BULLISH_KEYWORDS.includes(word)) {

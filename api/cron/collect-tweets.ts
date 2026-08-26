@@ -122,6 +122,7 @@ export default async function handler(
     let totalAnalyzed = 0;
     let totalStored = 0;
     const errors: Array<{ account: string; error: string }> = [];
+    const tweetsToStore: AnalyzedTweet[] = [];
 
     for (const [username, result] of highPriorityResults.entries()) {
       if (result.error) {
@@ -155,8 +156,7 @@ export default async function handler(
         const sentiment = analyzeSentiment(rawTweet.text);
         const signal = generateSignal(rawTweet.text, matches, arbitrage);
 
-        // Build analyzed tweet
-        const analyzedTweet: AnalyzedTweet = {
+        tweetsToStore.push({
           tweet: rawTweet,
           matches,
           sentiment,
@@ -166,12 +166,15 @@ export default async function handler(
           confidence: matches[0].confidence,
           analyzed_at: new Date().toISOString(),
           collected_at: new Date().toISOString(),
-        };
-
-        // Store tweet in KV
-        await storeTweet(analyzedTweet);
-        totalStored++;
+        });
       }
+    }
+
+    // Write all tweets to KV in parallel
+    const storeResults = await Promise.allSettled(tweetsToStore.map(storeTweet));
+    for (const r of storeResults) {
+      if (r.status === 'fulfilled') totalStored++;
+      else errors.push({ account: 'kv', error: r.reason?.message ?? 'store failed' });
     }
 
     // Step 6: Update feed indices

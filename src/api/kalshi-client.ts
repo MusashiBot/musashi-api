@@ -4,6 +4,7 @@
 
 import { Market } from '../types/market';
 import { generateKeywords } from './keyword-generator';
+import { isSimpleMarket } from './kalshi-filters';
 
 const KALSHI_API = 'https://api.elections.kalshi.com/trade-api/v2';
 const FETCH_TIMEOUT_MS = 10000; // 10s timeout to prevent hanging on cold starts
@@ -16,14 +17,14 @@ interface KalshiMarket {
   title: string;
   market_type?: string;
   mve_collection_ticker?: string; // present only on multi-variable event (parlay) markets
-  yes_ask: number;          // cents (0–100)
-  yes_ask_dollars?: number; // same in dollars (0–1), prefer this if present
-  yes_bid: number;
-  yes_bid_dollars?: number;
-  no_ask: number;
-  no_bid: number;
-  last_price?: number;      // last trade price for YES in cents
-  last_price_dollars?: number;
+  yes_ask: number | null;
+  yes_ask_dollars?: string | null;
+  yes_bid: number | null;
+  yes_bid_dollars?: string | null;
+  no_ask: number | null;
+  no_bid: number | null;
+  last_price?: number | null;
+  last_price_dollars?: string | null;
   volume?: number;
   volume_24h?: number;
   open_interest?: number;
@@ -36,27 +37,6 @@ interface KalshiMarketsResponse {
   cursor?: string;
 }
 
-/**
- * Returns true for simple binary YES/NO markets.
- * Filters out complex multi-variable event (parlay/combo) markets whose
- * titles are multi-leg strings like "yes Lakers, yes Celtics, no Bulls..."
- */
-function isSimpleMarket(km: KalshiMarket): boolean {
-  if (!km.title || !km.ticker) return false;
-
-  // MVE / multi-game parlay markets
-  if (km.mve_collection_ticker) return false;
-  if (/MULTIGAME|MVE/i.test(km.ticker)) return false;
-
-  // Titles that start with "yes " are multi-leg combo selections
-  if (/^yes\s/i.test(km.title.trim())) return false;
-
-  // More than 2 commas = likely a multi-leg title
-  const commas = (km.title.match(/,/g) || []).length;
-  if (commas > 2) return false;
-
-  return true;
-}
 
 /**
  * Fetch open markets from Kalshi's public API using cursor pagination.
@@ -98,7 +78,11 @@ export async function fetchKalshiMarkets(
       }
 
       const pageSimple = data.markets
-        .filter(isSimpleMarket)
+        .filter((km) => isSimpleMarket({
+          title: km.title,
+          tickerOrPlatformId: km.ticker,
+          mveCollectionTicker: km.mve_collection_ticker,
+        }))
         .map(toMarket)
         .filter(m => m.yesPrice > 0 && m.yesPrice < 1);
 
@@ -127,16 +111,25 @@ export async function fetchKalshiMarkets(
 
 /** Map a raw Kalshi market object to our Market interface */
 function toMarket(km: KalshiMarket): Market {
-  // Prefer the _dollars variant (already 0–1); fall back to /100 conversion
+  // Prefer the _dollars variant (already 0–1); fall back to /100 conversion.
+  // The Kalshi API returns _dollars fields as strings (e.g. "0.9700"), so
+  // parseFloat() is required before any arithmetic.
   let yesPrice: number;
-  // FIX 4: guard yes_bid_dollars > 0 — a zero bid (empty order book) would produce a
-  // midpoint of (0 + ask)/2, silently halving the price and generating false arbitrage signals.
-  if (km.yes_bid_dollars != null && km.yes_bid_dollars > 0 && km.yes_ask_dollars != null && km.yes_ask_dollars > 0) {
-    yesPrice = (km.yes_bid_dollars + km.yes_ask_dollars) / 2;
-  } else if (km.yes_bid != null && km.yes_ask != null && km.yes_ask > 0) {
+  const yesBidD = parseFloat(km.yes_bid_dollars ?? '');
+  const yesAskD = parseFloat(km.yes_ask_dollars ?? '');
+  const lastD   = parseFloat(km.last_price_dollars ?? '');
+
+  if (isFinite(yesBidD) && yesBidD > 0 && isFinite(yesAskD) && yesAskD > 0) {
+    yesPrice = (yesBidD + yesAskD) / 2;
+  } else if (isFinite(yesAskD) && yesAskD > 0) {
+    // Empty bid side (order book thin) — use ask alone
+    yesPrice = yesAskD;
+  } else if (km.yes_bid != null && km.yes_bid > 0 && km.yes_ask != null && km.yes_ask > 0) {
     yesPrice = ((km.yes_bid + km.yes_ask) / 2) / 100;
-  } else if (km.last_price_dollars != null && km.last_price_dollars > 0) {
-    yesPrice = km.last_price_dollars;
+  } else if (km.yes_ask != null && km.yes_ask > 0) {
+    yesPrice = km.yes_ask / 100;
+  } else if (isFinite(lastD) && lastD > 0) {
+    yesPrice = lastD;
   } else if (km.last_price != null && km.last_price > 0) {
     yesPrice = km.last_price / 100;
   } else {
@@ -165,7 +158,7 @@ function toMarket(km: KalshiMarket): Market {
     keywords: generateKeywords(km.title),
     yesPrice: +safeYes.toFixed(2),
     noPrice: safeNo,
-    volume24h: km.volume_24h ?? km.volume ?? 0,
+    volume24h: km.volume_24h ?? 0,
     url: marketUrl,
     category: inferCategory(km.series_ticker || km.event_ticker || km.ticker),
     lastUpdated: new Date().toISOString(),

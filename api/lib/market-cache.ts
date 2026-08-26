@@ -6,6 +6,7 @@
 
 import { Market, ArbitrageOpportunity } from '../../src/types/market';
 import { fetchPolymarkets } from '../../src/api/polymarket-client';
+import { fetchKalshiMarketsFromSupabase } from '../../src/api/kalshi-supabase';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
 import { FreshnessMetadata, SourceStatus } from './types';
@@ -23,6 +24,7 @@ let polyMarketCount = 0;
 let kalshiMarketCount = 0;
 let polyError: string | null = null;
 let kalshiError: string | null = null;
+let supabaseErrMsg: string | null = null;
 
 // In-memory cache for arbitrage opportunities
 // Default: 15 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
@@ -37,6 +39,8 @@ const KALSHI_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_KALSHI_MAX_PAGES, 
 
 // Stage 0 Session 2: Per-source timeout (5 seconds)
 const SOURCE_TIMEOUT_MS = 5000;
+// Supabase-specific budget; fallback gets its own full SOURCE_TIMEOUT_MS
+const SUPABASE_TIMEOUT_MS = 3000;
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -70,6 +74,25 @@ function withTimeout<T>(
   return Promise.race([promise, timer]).finally(() => clearTimeout(handle));
 }
 
+async function fetchKalshiWithFallback(): Promise<Market[]> {
+  supabaseErrMsg = null;
+  try {
+    return await withTimeout(
+      fetchKalshiMarketsFromSupabase(KALSHI_TARGET_COUNT),
+      SUPABASE_TIMEOUT_MS,
+      'Kalshi-Supabase'
+    );
+  } catch (err) {
+    supabaseErrMsg = (err as Error).message;
+    console.warn('[Market Cache] Supabase failed, falling back to live API:', supabaseErrMsg);
+    return await withTimeout(
+      fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
+      SOURCE_TIMEOUT_MS,
+      'Kalshi-Live'
+    );
+  }
+}
+
 /**
  * Fetch and cache markets from both platforms
  * Shared across all API endpoints to avoid duplicate fetches
@@ -95,11 +118,7 @@ export async function getMarkets(): Promise<Market[]> {
         SOURCE_TIMEOUT_MS,
         'Polymarket'
       ),
-      withTimeout(
-        fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Kalshi'
-      ),
+      fetchKalshiWithFallback(),
     ]);
 
     // Stage 0: Track Polymarket fetch
@@ -118,7 +137,10 @@ export async function getMarkets(): Promise<Market[]> {
       kalshiMarketCount = kalshiResult.value.length;
       kalshiError = null;
     } else {
-      kalshiError = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
+      const fallbackMsg = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
+      kalshiError = supabaseErrMsg
+        ? `Supabase: ${supabaseErrMsg}; fallback: ${fallbackMsg}`
+        : fallbackMsg;
       console.error('[Market Cache] Kalshi fetch failed:', kalshiError);
     }
 
