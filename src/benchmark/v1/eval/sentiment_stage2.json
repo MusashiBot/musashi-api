@@ -1,0 +1,565 @@
+{
+  "version": "v1",
+  "stage": "sentiment",
+  "model_version": "v1.0.0",
+  "evaluated_at": "2026-08-26T20:36:26.178Z",
+  "pipeline_filter": "matcher_accepted",
+  "include_low_confidence": false,
+  "relevant_only": false,
+  "overall": {
+    "n": 13,
+    "accuracy_score": -0.15384615384615385,
+    "hard_accuracy": 0.8461538461538461,
+    "macro_f1": 0.3055555555555555,
+    "per_class": {
+      "bullish": {
+        "precision": 0,
+        "recall": null,
+        "f1": null,
+        "support": 0
+      },
+      "bearish": {
+        "precision": null,
+        "recall": null,
+        "f1": null,
+        "support": 0
+      },
+      "neutral": {
+        "precision": 1,
+        "recall": 0.8461538461538461,
+        "f1": 0.9166666666666666,
+        "support": 13
+      }
+    },
+    "expected_calibration_error": 1,
+    "reliability_diagram": [
+      {
+        "bin_start": 0,
+        "bin_end": 0.1,
+        "count": 11,
+        "mean_confidence": 0,
+        "empirical_accuracy": 1
+      },
+      {
+        "bin_start": 0.1,
+        "bin_end": 0.2,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.2,
+        "bin_end": 0.3,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.3,
+        "bin_end": 0.4,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.4,
+        "bin_end": 0.5,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.5,
+        "bin_end": 0.6,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.6,
+        "bin_end": 0.7,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.7,
+        "bin_end": 0.8,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.8,
+        "bin_end": 0.9,
+        "count": 0,
+        "mean_confidence": null,
+        "empirical_accuracy": null
+      },
+      {
+        "bin_start": 0.9,
+        "bin_end": 1,
+        "count": 2,
+        "mean_confidence": 1,
+        "empirical_accuracy": 0
+      }
+    ]
+  },
+  "by_split": {
+    "train": {
+      "n": 4,
+      "accuracy_score": -0.25,
+      "hard_accuracy": 0.75,
+      "macro_f1": 0.2857142857142857,
+      "per_class": {
+        "bullish": {
+          "precision": 0,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "bearish": {
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "neutral": {
+          "precision": 1,
+          "recall": 0.75,
+          "f1": 0.8571428571428571,
+          "support": 4
+        }
+      },
+      "expected_calibration_error": 1,
+      "reliability_diagram": [
+        {
+          "bin_start": 0,
+          "bin_end": 0.1,
+          "count": 3,
+          "mean_confidence": 0,
+          "empirical_accuracy": 1
+        },
+        {
+          "bin_start": 0.1,
+          "bin_end": 0.2,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.2,
+          "bin_end": 0.3,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.3,
+          "bin_end": 0.4,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.4,
+          "bin_end": 0.5,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.5,
+          "bin_end": 0.6,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.6,
+          "bin_end": 0.7,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.7,
+          "bin_end": 0.8,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.8,
+          "bin_end": 0.9,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.9,
+          "bin_end": 1,
+          "count": 1,
+          "mean_confidence": 1,
+          "empirical_accuracy": 0
+        }
+      ]
+    },
+    "validation": {
+      "n": 5,
+      "accuracy_score": -0.2,
+      "hard_accuracy": 0.8,
+      "macro_f1": 0.29629629629629634,
+      "per_class": {
+        "bullish": {
+          "precision": 0,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "bearish": {
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "neutral": {
+          "precision": 1,
+          "recall": 0.8,
+          "f1": 0.888888888888889,
+          "support": 5
+        }
+      },
+      "expected_calibration_error": 1,
+      "reliability_diagram": [
+        {
+          "bin_start": 0,
+          "bin_end": 0.1,
+          "count": 4,
+          "mean_confidence": 0,
+          "empirical_accuracy": 1
+        },
+        {
+          "bin_start": 0.1,
+          "bin_end": 0.2,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.2,
+          "bin_end": 0.3,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.3,
+          "bin_end": 0.4,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.4,
+          "bin_end": 0.5,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.5,
+          "bin_end": 0.6,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.6,
+          "bin_end": 0.7,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.7,
+          "bin_end": 0.8,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.8,
+          "bin_end": 0.9,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.9,
+          "bin_end": 1,
+          "count": 1,
+          "mean_confidence": 1,
+          "empirical_accuracy": 0
+        }
+      ]
+    },
+    "test": {
+      "n": 4,
+      "accuracy_score": 0,
+      "hard_accuracy": 1,
+      "macro_f1": 0.3333333333333333,
+      "per_class": {
+        "bullish": {
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "bearish": {
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "support": 0
+        },
+        "neutral": {
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "support": 4
+        }
+      },
+      "expected_calibration_error": 1,
+      "reliability_diagram": [
+        {
+          "bin_start": 0,
+          "bin_end": 0.1,
+          "count": 4,
+          "mean_confidence": 0,
+          "empirical_accuracy": 1
+        },
+        {
+          "bin_start": 0.1,
+          "bin_end": 0.2,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.2,
+          "bin_end": 0.3,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.3,
+          "bin_end": 0.4,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.4,
+          "bin_end": 0.5,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.5,
+          "bin_end": 0.6,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.6,
+          "bin_end": 0.7,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.7,
+          "bin_end": 0.8,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.8,
+          "bin_end": 0.9,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        },
+        {
+          "bin_start": 0.9,
+          "bin_end": 1,
+          "count": 0,
+          "mean_confidence": null,
+          "empirical_accuracy": null
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "tweet_id": "2092704118380929281",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "train"
+    },
+    {
+      "tweet_id": "2092704065868505490",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "train"
+    },
+    {
+      "tweet_id": "2092704040157098062",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "train"
+    },
+    {
+      "tweet_id": "2092704030552178908",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "human_label": "neutral",
+      "predicted_label": "bullish",
+      "confidence": 1,
+      "accuracy_score": -1,
+      "correct": false,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "train"
+    },
+    {
+      "tweet_id": "2092704736860365242",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "validation"
+    },
+    {
+      "tweet_id": "2092704725498257636",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "validation"
+    },
+    {
+      "tweet_id": "2092704666077274378",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "validation"
+    },
+    {
+      "tweet_id": "2092704634343182507",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "human_label": "neutral",
+      "predicted_label": "bullish",
+      "confidence": 1,
+      "accuracy_score": -1,
+      "correct": false,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "validation"
+    },
+    {
+      "tweet_id": "2092704607738659260",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "validation"
+    },
+    {
+      "tweet_id": "2092707781170073819",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "yes",
+      "label_confidence": "medium",
+      "split": "test"
+    },
+    {
+      "tweet_id": "2092707757149630903",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "test"
+    },
+    {
+      "tweet_id": "2092707693035245863",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "no",
+      "label_confidence": "high",
+      "split": "test"
+    },
+    {
+      "tweet_id": "2092707659019362438",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "human_label": "neutral",
+      "predicted_label": "neutral",
+      "confidence": 0,
+      "accuracy_score": 0,
+      "correct": true,
+      "is_relevant": "yes",
+      "label_confidence": "medium",
+      "split": "test"
+    }
+  ]
+}

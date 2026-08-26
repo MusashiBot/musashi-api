@@ -11,7 +11,11 @@
     "test:agent:local": "MUSASHI_API_BASE_URL=http://127.0.0.1:3000 node --import tsx scripts/test-agent-api.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p api/tsconfig.json",
     "clean": "rm -rf dist .vercel",
-    "collect": "tsx src/benchmark/collect-data.ts"
+    "collect": "tsx src/benchmark/collect-data.ts",
+    "label": "tsx src/benchmark/label-tweets.ts",
+    "split": "tsx src/benchmark/create-splits.ts",
+    "eval:matcher": "tsx src/benchmark/eval-matcher.ts",
+    "eval:sentiment": "tsx src/benchmark/eval-sentiment.ts"
   },
   "keywords": [
     "musashi",

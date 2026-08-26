@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "created_at": "2026-08-26T20:20:40.145Z",
+  "seed": 42,
+  "ratios": {
+    "train": 0.6,
+    "validation": 0.2,
+    "test": 0.2
+  },
+  "stratified_by": "category",
+  "train": [
+    "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+    "polymarket-0x52b24b21324aa8a56d9e2ddf2893713b57ba41e572bd787ed091a86d4378ecac"
+  ],
+  "validation": [
+    "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9"
+  ],
+  "test": [
+    "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272"
+  ]
+}

@@ -234,6 +234,81 @@ export class TwitterClient {
   }
 
   /**
+   * Search recent tweets (last 7 days) via Twitter API v2 recent search.
+   * Used by benchmark collection for broad, market-derived queries.
+   *
+   * @param query - Twitter search query (operators allowed)
+   * @param startTime - Inclusive ISO start (must be within last 7 days)
+   * @param endTime - Exclusive ISO end
+   * @param maxResults - Max tweets to return (10–100)
+   */
+  async searchRecent(
+    query: string,
+    startTime: string,
+    endTime: string,
+    maxResults: number = 50
+  ): Promise<Array<RawTweet & { author_id: string }>> {
+    const url = new URL(`${this.baseUrl}/tweets/search/recent`);
+    url.searchParams.set('query', query);
+    url.searchParams.set('start_time', startTime);
+    url.searchParams.set('end_time', endTime);
+    url.searchParams.set('max_results', Math.min(Math.max(maxResults, 10), 100).toString());
+    url.searchParams.set('tweet.fields', 'created_at,public_metrics,referenced_tweets,author_id');
+    url.searchParams.set('expansions', 'author_id');
+    url.searchParams.set('user.fields', 'username,name');
+
+    try {
+      const response = await fetch(url.toString(), {
+        headers: {
+          'Authorization': `Bearer ${this.bearerToken}`,
+        },
+      });
+
+      await this.checkRateLimit(response);
+
+      if (!response.ok) {
+        let errorBody = '';
+        try {
+          errorBody = JSON.stringify(await response.json());
+        } catch {
+          errorBody = await response.text();
+        }
+        throw new TwitterApiError(
+          `Failed recent search: ${response.status} - ${errorBody}`,
+          response.status
+        );
+      }
+
+      const data = await response.json() as TwitterTimelineResponse;
+      if (!data.data || data.data.length === 0) {
+        return [];
+      }
+
+      const usersById = new Map(
+        (data.includes?.users ?? []).map(u => [u.id, u.username])
+      );
+
+      return data.data
+        .filter(tweet => this.shouldIncludeTweet(tweet))
+        .map(tweet => {
+          const username = usersById.get(tweet.author_id) ?? tweet.author_id;
+          return {
+            ...this.mapTweet(tweet, username),
+            author_id: tweet.author_id,
+          };
+        });
+    } catch (error) {
+      if (error instanceof TwitterApiError) {
+        throw error;
+      }
+      throw new TwitterApiError(
+        `Error in recent search: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
+  /**
    * Batch fetch timelines for multiple usernames
    * Isolates errors per account so one failure doesn't crash the entire batch
    *

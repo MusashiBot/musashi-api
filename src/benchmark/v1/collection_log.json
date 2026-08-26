@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "started_at": "2026-08-26T20:17:40.082Z",
+  "finished_at": "2026-08-26T20:17:45.281Z",
+  "max_markets_per_source": 2,
+  "skip_tweets": false,
+  "market_count": 4,
+  "tweet_count": 81,
+  "kalshi_count": 2,
+  "polymarket_count": 2,
+  "notes": [
+    "Tweets collected with broad market-derived queries; KeywordMatcher.match() recorded but not used as a filter.",
+    "Human label fields left null for the labeling step.",
+    "Implied probabilities recorded at 30m / 1h / 2h before resolution when history is available."
+  ],
+  "errors": []
+}

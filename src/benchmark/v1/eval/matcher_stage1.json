@@ -1,0 +1,144 @@
+{
+  "version": "v1",
+  "stage": "matcher",
+  "evaluated_at": "2026-08-26T20:32:59.753Z",
+  "source": "frozen_matcher_result",
+  "include_low_confidence": true,
+  "overall": {
+    "recall": 0.75,
+    "category_accuracy": 0.21428571428571427,
+    "exact_market_recall": 0.75,
+    "counts": {
+      "labeled_tweets": 81,
+      "relevant_tweets": 4,
+      "matcher_accepted": 14,
+      "recall_hits": 3,
+      "exact_market_hits": 3,
+      "category_correct": 3,
+      "false_negatives": 1,
+      "false_positives": 11
+    }
+  },
+  "by_split": {
+    "train": {
+      "recall": null,
+      "category_accuracy": 0,
+      "exact_market_recall": null,
+      "counts": {
+        "labeled_tweets": 30,
+        "relevant_tweets": 0,
+        "matcher_accepted": 4,
+        "recall_hits": 0,
+        "exact_market_hits": 0,
+        "category_correct": 0,
+        "false_negatives": 0,
+        "false_positives": 4
+      }
+    },
+    "validation": {
+      "recall": 0,
+      "category_accuracy": 0,
+      "exact_market_recall": 0,
+      "counts": {
+        "labeled_tweets": 23,
+        "relevant_tweets": 1,
+        "matcher_accepted": 5,
+        "recall_hits": 0,
+        "exact_market_hits": 0,
+        "category_correct": 0,
+        "false_negatives": 1,
+        "false_positives": 5
+      }
+    },
+    "test": {
+      "recall": 1,
+      "category_accuracy": 0.6,
+      "exact_market_recall": 1,
+      "counts": {
+        "labeled_tweets": 28,
+        "relevant_tweets": 3,
+        "matcher_accepted": 5,
+        "recall_hits": 3,
+        "exact_market_hits": 3,
+        "category_correct": 3,
+        "false_negatives": 0,
+        "false_positives": 2
+      }
+    }
+  },
+  "false_negatives": [
+    {
+      "tweet_id": "2092704757915824482",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "market_category": "Other"
+    }
+  ],
+  "false_positives": [
+    {
+      "tweet_id": "2092704118380929281",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704065868505490",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704040157098062",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704030552178908",
+      "market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704736860365242",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704725498257636",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704666077274378",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704634343182507",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092704607738659260",
+      "market_id": "kalshi-KXUCLWTOTAL-26AUG26CFCRSO-9",
+      "assigned_market_id": "kalshi-KXCLUBFSPREAD-26AUG26OYOSAI-SAI4",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092707757149630903",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "assigned_market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "assigned_category": "Other"
+    },
+    {
+      "tweet_id": "2092707693035245863",
+      "market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "assigned_market_id": "polymarket-0xfa282a8360ce5667ac90fc9f2e912dce7ff649263683d79d50bde4c6153ad272",
+      "assigned_category": "Other"
+    }
+  ]
+}
